@@ -1,0 +1,10 @@
+[versions]
+kotlin = "2.1.21"
+markdown = "0.7.3"
+
+[libraries]
+jetbrains-markdown = { module = "org.jetbrains:markdown", version.ref = "markdown" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

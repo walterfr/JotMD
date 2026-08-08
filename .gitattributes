@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Corpus de roundtrip: bytes exatos. Normalização de fim de linha pelo git
+# mudaria o que o teste lê do disco.
+docs/*.md -text
