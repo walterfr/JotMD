@@ -1,5 +1,6 @@
 package io.github.walterfr.jotmd.editor
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -58,4 +59,6 @@ object MdTokens {
         background = inlineCodeBackground,
         color = text,
     )
+
+    val documentPadding = PaddingValues(horizontal = 16.dp, vertical = 24.dp)
 }

@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -29,7 +30,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.github.walterfr.jotmd.core.DocState
 import io.github.walterfr.jotmd.core.parse
-import io.github.walterfr.jotmd.editor.DocumentView
+import io.github.walterfr.jotmd.editor.EditorScreen
+import io.github.walterfr.jotmd.editor.EditorState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -37,27 +39,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { MaterialTheme { ReaderScreen() } }
+        setContent { MaterialTheme { EditorHostScreen() } }
     }
 }
 
 /**
- * Tela do leitor. F1: abre um arquivo por SAF e renderiza, sem edição.
+ * Shell da tela de edição. F2: abre um arquivo por SAF, toca um bloco para
+ * editar o markdown cru dele, toolbar embaixo para negrito/itálico/riscado/
+ * código na seleção.
  *
- * Gravar fica para quando houver o que gravar — o editor é F2/F3. Abrir já
- * pede permissão persistente para que o arquivo continue acessível depois.
+ * Gravar fica para quando houver o que gravar de volta com segurança — split/
+ * merge/reparse são F3, e sem eles um bloco editado pode divergir do que fica
+ * salvo se o usuário sair no meio.
  */
 @Composable
-private fun ReaderScreen() {
+private fun EditorHostScreen() {
     val context = LocalContext.current
-    var doc by remember { mutableStateOf(DocState(leading = "", blocks = emptyList())) }
+    val editorState = remember { EditorState(DocState(leading = "", blocks = emptyList())) }
     var title by remember { mutableStateOf("typora-ref.md") }
 
     LaunchedEffect(Unit) {
         val text = withContext(Dispatchers.IO) {
             context.assets.open("typora-ref.md").bufferedReader().use { it.readText() }
         }
-        doc = parse(text)
+        editorState.load(parse(text))
     }
 
     val open = rememberLauncherForActivityResult(
@@ -75,11 +80,11 @@ private fun ReaderScreen() {
             ?.use { it.readText() }
             ?: return@rememberLauncherForActivityResult
         title = uri.lastPathSegment?.substringAfterLast('/') ?: "documento"
-        doc = parse(text)
+        editorState.load(parse(text))
     }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        androidx.compose.foundation.layout.Row(
+        Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -93,6 +98,6 @@ private fun ReaderScreen() {
             }
         }
         HorizontalDivider()
-        DocumentView(doc)
+        EditorScreen(editorState, Modifier.weight(1f))
     }
 }
