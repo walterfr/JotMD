@@ -30,6 +30,22 @@ que esconde/revela por span conforme a posição do cursor — caro e instável 
 IME (Armadilha 4 do contexto). Decisão: ficar na aproximação por bloco em F2/F3,
 reavaliar em F6.
 
+## Duas armadilhas do `jetbrains/markdown`
+
+Ambas custaram bug real na F1. Ficam aqui porque nenhuma aparece na API.
+
+**1. Pontuação literal vira token de marcador.** Em `a (b) c`, o `(` e o `)` são
+tokens dos tipos `(` e `)` — os mesmos que delimitam o destino de um link. Em
+`2*3=6`, o `*` sem par vira um token `EMPH`. Logo, **descartar marcador por tipo
+apaga pontuação do usuário**. O renderizador decide pela posição na árvore: cada
+elemento conhecido descarta os próprios marcadores e todo o resto sai literal.
+Construção desconhecida aparece como o texto cru dela; nunca some.
+
+**2. Token e elemento compartilham nome sendo tipos diferentes.**
+`MarkdownTokenTypes.BLOCK_QUOTE` é o `>` de cada linha;
+`MarkdownElementTypes.BLOCK_QUOTE` é a citação inteira. Idem `SETEXT_1`. Trocar
+um pelo outro compila e faz o marcador vazar para a tela.
+
 ## Tokens de tipografia (tema github)
 
 Raiz: `html { font-size: 14px }`. `1rem = 14px`. `em` abaixo é relativo a isso.

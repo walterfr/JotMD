@@ -42,6 +42,15 @@ fun parse(text: String, ids: BlockIdSource = BlockIdSource()): DocState {
     return DocState(leading = text.substring(0, nodes.first().startOffset), blocks = blocks)
 }
 
+/**
+ * AST de um trecho isolado, com offsets locais a ele.
+ *
+ * Use com `block.source`: o AST do documento inteiro tem offsets globais, e
+ * misturar os dois é a origem clássica de bug de renderização por bloco.
+ */
+fun astOf(source: String): ASTNode =
+    MarkdownParser(flavour).buildMarkdownTreeFromString(source)
+
 /** Separadores entre blocos: viram `trailing` do bloco anterior, nunca um bloco. */
 private val ASTNode.isFiller: Boolean
     get() = type == MarkdownTokenTypes.EOL || type == MarkdownTokenTypes.WHITE_SPACE
