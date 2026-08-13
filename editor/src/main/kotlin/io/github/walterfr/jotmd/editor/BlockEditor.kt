@@ -14,9 +14,18 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import io.github.walterfr.jotmd.core.Block
+import io.github.walterfr.jotmd.core.BlockType
 
 /**
  * Um bloco editável: focado mostra o markdown cru num [BasicTextField],
@@ -42,7 +51,8 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
                 .onFocusChanged { info ->
                     if (info.isFocused) hadFocus = true
                     else if (hadFocus) state.release(block.id)
-                },
+                }
+                .onPreviewKeyEvent { event -> handleKey(event, block, state) },
             textStyle = sourceStyle,
             cursorBrush = SolidColor(MdTokens.link),
         )
@@ -53,6 +63,50 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
         )
     }
 }
+
+/**
+ * Enter, Backspace no início, `↑`/`↓` nas bordas, Ctrl+Z/Ctrl+Shift+Z.
+ *
+ * Enter só divide bloco em PARAGRAPH/HEADING — nos outros tipos (cerca de
+ * código, citação, lista, tabela) vira newline literal. Continuação
+ * inteligente (novo item de lista, `>` automático) não está em F3; sem ela,
+ * interceptar Enter ali só atrapalharia sem ganhar nada.
+ */
+private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    val cursor = state.editValue.selection
+    val text = state.editValue.text
+
+    return when {
+        event.isCtrlPressed && event.key == Key.Z && event.isShiftPressed -> {
+            state.redo()
+            true
+        }
+        event.isCtrlPressed && event.key == Key.Z -> {
+            state.undo()
+            true
+        }
+        event.key == Key.Enter && cursor.collapsed && isSplittable(block.type) -> {
+            state.splitAtCursor()
+            true
+        }
+        event.key == Key.Backspace && cursor.collapsed && cursor.start == 0 -> {
+            state.mergeWithPreviousBlock(block.id)
+            true
+        }
+        event.key == Key.DirectionUp && cursor.collapsed && cursor.start == 0 -> {
+            state.focusPrevious(block.id)
+            true
+        }
+        event.key == Key.DirectionDown && cursor.collapsed && cursor.start == text.length -> {
+            state.focusNext(block.id)
+            true
+        }
+        else -> false
+    }
+}
+
+private fun isSplittable(type: BlockType) = type == BlockType.PARAGRAPH || type == BlockType.HEADING
 
 private val sourceStyle = TextStyle(
     color = MdTokens.text,

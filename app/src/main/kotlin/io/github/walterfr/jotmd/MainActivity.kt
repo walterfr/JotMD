@@ -28,8 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import io.github.walterfr.jotmd.core.DocState
-import io.github.walterfr.jotmd.core.parse
 import io.github.walterfr.jotmd.editor.EditorScreen
 import io.github.walterfr.jotmd.editor.EditorState
 import kotlinx.coroutines.Dispatchers
@@ -44,25 +42,26 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Shell da tela de edição. F2: abre um arquivo por SAF, toca um bloco para
- * editar o markdown cru dele, toolbar embaixo para negrito/itálico/riscado/
- * código na seleção.
+ * Shell da tela de edição: abre um arquivo por SAF, toca um bloco para editar
+ * o markdown cru dele, toolbar embaixo para negrito/itálico/riscado/código na
+ * seleção. Enter divide bloco, Backspace no início funde, `↑`/`↓` navegam,
+ * Ctrl+Z/Ctrl+Shift+Z desfazem — ver BlockEditor.kt.
  *
- * Gravar fica para quando houver o que gravar de volta com segurança — split/
- * merge/reparse são F3, e sem eles um bloco editado pode divergir do que fica
- * salvo se o usuário sair no meio.
+ * Ainda sem gravar de volta no arquivo: falta decidir onde entra a escrita via
+ * SAF (a cada edição? só ao sair? um botão "Salvar"?) — questão de produto,
+ * não téorica, não travo nisso.
  */
 @Composable
 private fun EditorHostScreen() {
     val context = LocalContext.current
-    val editorState = remember { EditorState(DocState(leading = "", blocks = emptyList())) }
+    val editorState = remember { EditorState() }
     var title by remember { mutableStateOf("typora-ref.md") }
 
     LaunchedEffect(Unit) {
         val text = withContext(Dispatchers.IO) {
             context.assets.open("typora-ref.md").bufferedReader().use { it.readText() }
         }
-        editorState.load(parse(text))
+        editorState.load(text)
     }
 
     val open = rememberLauncherForActivityResult(
@@ -80,7 +79,7 @@ private fun EditorHostScreen() {
             ?.use { it.readText() }
             ?: return@rememberLauncherForActivityResult
         title = uri.lastPathSegment?.substringAfterLast('/') ?: "documento"
-        editorState.load(parse(text))
+        editorState.load(text)
     }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
