@@ -200,10 +200,10 @@ fun serialize(blocks: List<Block>): String
 - [ ] Testes JVM completos das 4 operações
 
 ### F4 — Elementos avançados (2 semanas)
-- [ ] Tabelas (parsing GFM, renderização simples)
-- [ ] Imagens inline (SAF picker, preview)
-- [ ] Checkboxes (listas de tarefa)
-- [ ] Code fences com linguagem
+- [x] Tabelas (parsing GFM, renderização com alinhamento)
+- [x] Imagens inline (preview de URIs SAF, fallback textual)
+- [x] Checkboxes (listas de tarefa)
+- [x] Code fences com linguagem
 
 ### F5 — Workspace e descoberta (2 semanas)
 - [ ] Pasta raiz, navegação de arquivos

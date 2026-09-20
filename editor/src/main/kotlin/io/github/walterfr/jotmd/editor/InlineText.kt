@@ -90,8 +90,8 @@ private fun AnnotatedString.Builder.appendNode(node: ASTNode, src: String) {
         MarkdownElementTypes.FULL_REFERENCE_LINK,
         MarkdownElementTypes.SHORT_REFERENCE_LINK -> appendLink(node, src)
 
-        // A imagem em si é F4. Por ora vale o texto alternativo, sem estilo de
-        // link — melhor que sumir e melhor que fingir que é clicável.
+        // Imagens isoladas recebem preview no BlockRenderer; dentro de um
+        // parágrafo misto, o texto alternativo mantém o fluxo inline legível.
         MarkdownElementTypes.IMAGE -> {
             val label = node.pick(MarkdownElementTypes.LINK_TEXT)
                 ?: node.pick(MarkdownElementTypes.INLINE_LINK)?.pick(MarkdownElementTypes.LINK_TEXT)

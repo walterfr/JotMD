@@ -30,6 +30,7 @@ object MdTokens {
     val quoteBar = Color(0xFFDFE2E5)
     val ruleColor = Color(0xFFE7E7E7)
     val codeBorder = Color(0xFFE7EAED)
+    val tableBorder = Color(0xFFD9DEE3)
     val inlineCodeBackground = Color(0xFFF3F4F4)
     val fenceBackground = Color(0xFFF8F8F8)
 

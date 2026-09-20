@@ -109,3 +109,51 @@ fun dedentIndentedCode(source: String): String =
             else -> line
         }
     }.trim('\n')
+
+data class TableModel(
+    val headers: List<String>,
+    val alignments: List<TableAlignment?>,
+    val rows: List<List<String>>,
+)
+
+enum class TableAlignment { LEFT, CENTER, RIGHT }
+
+fun tableOf(source: String): TableModel? {
+    val lines = source.lineSequence().filter { it.isNotBlank() }.toList()
+    if (lines.size < 2) return null
+    val header = tableCells(lines[0])
+    val separator = tableCells(lines[1])
+    if (header.isEmpty() || separator.size != header.size ||
+        separator.any { !it.matches(Regex(":?-{1,}:?")) }
+    ) return null
+    val alignments = separator.map {
+        when {
+            it.startsWith(":") && it.endsWith(":") -> TableAlignment.CENTER
+            it.startsWith(":") -> TableAlignment.LEFT
+            it.endsWith(":") -> TableAlignment.RIGHT
+            else -> null
+        }
+    }
+    return TableModel(
+        headers = header,
+        alignments = alignments,
+        rows = lines.drop(2).map { tableCells(it).padTo(header.size) },
+    )
+}
+
+private fun tableCells(line: String): List<String> {
+    val trimmed = line.trim()
+    val content = trimmed.removePrefix("|").removeSuffix("|")
+    return content.split('|').map(String::trim)
+}
+
+private fun List<String>.padTo(size: Int): List<String> =
+    take(size).let { it + List(size - it.size) { "" } }
+
+data class ImageRef(val alt: String, val destination: String)
+
+fun imageRefs(source: String): List<ImageRef> =
+    Regex("""!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^)]*["'])?\)""")
+        .findAll(source)
+        .map { ImageRef(it.groupValues[1], it.groupValues[2]) }
+        .toList()

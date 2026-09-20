@@ -115,4 +115,20 @@ class InlineTextTest {
         assertEquals(1, headingLevel("Setext\n======"))
         assertEquals(2, headingLevel("Setext\n------"))
     }
+
+    @Test
+    fun `tabela preserva células e alinhamento`() {
+        val table = checkNotNull(tableOf("| Nome | Valor | Estado |\n|:---|:---:|---:|\n| A | 10 | ok |"))
+        assertEquals(listOf("Nome", "Valor", "Estado"), table.headers)
+        assertEquals(listOf(TableAlignment.LEFT, TableAlignment.CENTER, TableAlignment.RIGHT), table.alignments)
+        assertEquals(listOf(listOf("A", "10", "ok")), table.rows)
+    }
+
+    @Test
+    fun `imagens expõem alt e destino para preview`() {
+        assertEquals(
+            listOf(ImageRef("gato", "images/gato.png")),
+            imageRefs("antes ![gato](images/gato.png) depois"),
+        )
+    }
 }

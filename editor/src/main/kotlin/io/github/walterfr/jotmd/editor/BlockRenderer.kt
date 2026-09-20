@@ -1,5 +1,8 @@
 package io.github.walterfr.jotmd.editor
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -7,22 +10,29 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.walterfr.jotmd.core.Block
 import io.github.walterfr.jotmd.core.BlockType
@@ -31,7 +41,7 @@ import io.github.walterfr.jotmd.core.BlockType
  * Um bloco renderizado, sem edição. F1 do roadmap.
  *
  * Tipo sem tratamento cai no ramo de parágrafo, que mostra o markdown inline do
- * jeito que der. Tabela é F4: até lá aparece o texto cru — feio, mas nada some.
+ * jeito que der.
  */
 @Composable
 fun BlockRenderer(block: Block, modifier: Modifier = Modifier) {
@@ -39,11 +49,23 @@ fun BlockRenderer(block: Block, modifier: Modifier = Modifier) {
         BlockType.HEADING -> HeadingBlock(block.source, modifier)
         BlockType.BLOCKQUOTE -> QuoteBlock(block.source, modifier)
         BlockType.UNORDERED_LIST, BlockType.ORDERED_LIST -> ListBlock(block.source, modifier)
+        BlockType.TABLE -> TableBlock(block.source, modifier)
         BlockType.CODE_FENCE -> CodeBlock(block.source, fenced = true, modifier = modifier)
         BlockType.CODE_INDENTED -> CodeBlock(block.source, fenced = false, modifier = modifier)
         BlockType.HORIZONTAL_RULE -> RuleBlock(modifier)
+        BlockType.PARAGRAPH -> {
+            val images = remember(block.source) { imageRefs(block.source) }
+            if (images.size == 1 && block.source.trim().startsWith("![") &&
+                block.source.trim().endsWith(")")
+            ) {
+                ImagePreview(images.single(), modifier)
+            } else {
+                ParagraphBlock(block.source, modifier)
+            }
+        }
         else -> ParagraphBlock(block.source, modifier)
     }
+
 }
 
 private val bodyStyle = TextStyle(
@@ -115,8 +137,95 @@ private fun ListBlock(source: String, modifier: Modifier = Modifier) {
                 )
                 BasicText(row.content, style = bodyStyle)
             }
+
         }
     }
+}
+
+@Composable
+private fun ImagePreview(image: ImageRef, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, image.destination) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openInputStream(Uri.parse(image.destination)).use {
+                    BitmapFactory.decodeStream(it)
+                }
+            }.getOrNull()
+        }
+    }
+    Box(
+        modifier
+            .fillMaxWidth()
+            .background(MdTokens.fenceBackground, RoundedCornerShape(MdTokens.cornerRadius))
+            .border(1.dp, MdTokens.codeBorder, RoundedCornerShape(MdTokens.cornerRadius))
+            .padding(12.dp),
+    ) {
+        Column {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = image.alt,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                )
+            } else {
+                BasicText(
+                    AnnotatedString("[imagem] ${image.alt.ifBlank { "Imagem" }}"),
+                    style = bodyStyle.copy(fontWeight = FontWeight.Medium),
+                )
+            }
+            BasicText(
+                AnnotatedString(image.destination),
+                style = bodyStyle.copy(color = MdTokens.muted, fontSize = MdTokens.base * 0.8f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TableBlock(source: String, modifier: Modifier = Modifier) {
+    val table = remember(source) { tableOf(source) }
+    if (table == null) {
+        ParagraphBlock(source, modifier)
+        return
+    }
+    Column(
+        modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+    ) {
+        TableRowView(table.headers, table.alignments, header = true)
+        for (row in table.rows) {
+            TableRowView(row, table.alignments)
+        }
+    }
+}
+
+@Composable
+private fun TableRowView(
+    cells: List<String>,
+    alignments: List<TableAlignment?>,
+    header: Boolean = false,
+) {
+    Row(Modifier.fillMaxWidth()) {
+        cells.forEachIndexed { index, cell ->
+            BasicText(
+                inlineText(cell),
+                Modifier
+                    .widthIn(min = 72.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                style = bodyStyle.copy(
+                    fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = when (alignments.getOrNull(index)) {
+                        TableAlignment.CENTER -> TextAlign.Center
+                        TableAlignment.RIGHT -> TextAlign.End
+                        else -> TextAlign.Start
+                    },
+                ),
+            )
+        }
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(MdTokens.tableBorder))
 }
 
 private fun markerLabel(row: ListRow): String = when {
@@ -129,8 +238,8 @@ private fun markerLabel(row: ListRow): String = when {
 
 @Composable
 private fun CodeBlock(source: String, fenced: Boolean, modifier: Modifier = Modifier) {
-    val code = remember(source, fenced) {
-        if (fenced) fenceOf(source).code else dedentIndentedCode(source)
+    val fence = remember(source, fenced) {
+        if (fenced) fenceOf(source) else Fence(null, dedentIndentedCode(source))
     }
     val shape = RoundedCornerShape(MdTokens.cornerRadius)
     Box(
@@ -140,16 +249,25 @@ private fun CodeBlock(source: String, fenced: Boolean, modifier: Modifier = Modi
             .border(1.dp, MdTokens.codeBorder, shape)
             .padding(MdTokens.codePadding),
     ) {
-        BasicText(
-            AnnotatedString(code),
-            Modifier.horizontalScroll(rememberScrollState()),
-            style = bodyStyle.copy(
-                fontFamily = FontFamily.Monospace,
-                fontSize = MdTokens.base * 0.9f,
-                lineHeight = MdTokens.base * 0.9f * 1.45f,
-            ),
-            softWrap = false,
-        )
+        Column {
+            if (!fence.language.isNullOrBlank()) {
+                BasicText(
+                    fence.language,
+                    style = bodyStyle.copy(color = MdTokens.muted, fontSize = MdTokens.base * 0.8f),
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            BasicText(
+                AnnotatedString(fence.code),
+                Modifier.horizontalScroll(rememberScrollState()),
+                style = bodyStyle.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = MdTokens.base * 0.9f,
+                    lineHeight = MdTokens.base * 0.9f * 1.45f,
+                ),
+                softWrap = false,
+            )
+        }
     }
 }
 

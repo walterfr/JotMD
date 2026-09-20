@@ -5,16 +5,16 @@ Leitor e editor de Markdown nativo para Android, com UI/UX inspirada em Typora.
 
 ## Estado
 
-**F1 — Leitor.** Abre um `.md` por SAF e renderiza heading, parágrafo, lista,
-citação, código e regra horizontal com a tipografia do Typora. Sem edição ainda.
-Tabela renderiza como texto cru até a F4. O roadmap está em `AI_CONTEXT.md`.
+**F4 — Elementos avançados.** Abre um `.md` por SAF e edita blocos em Compose,
+com tabelas GFM alinhadas, checkboxes de tarefas, preview de imagens por URI
+SAF e cercas de código com linguagem. O roadmap está em `AI_CONTEXT.md`.
 
 ## Módulos
 
 | Módulo | O quê | Fase |
 |---|---|---|
 | `:core-md` | Parsing e serialização. Kotlin puro, zero Android, testável em JVM. | F0 ✅ |
-| `:editor` | Renderização de blocos em Compose. Edição em F2/F3. | F1 ✅ |
+| `:editor` | Renderização e edição de blocos em Compose. | F1–F4 ✅ |
 | `:app` | Shell: abrir arquivo por SAF, tela do leitor. | F1 ✅ |
 
 ## A invariante
