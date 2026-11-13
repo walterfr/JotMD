@@ -102,6 +102,20 @@ class EditorStateTest {
         assertEquals("novo", s.doc.blocks[0].source)
     }
 
+    @Test
+    fun `text devolve o documento carregado idêntico, sem edição`() {
+        val original = "\n# T\n\num **b**\n\n\n- item\r\n"
+        assertEquals(original, EditorState(original).text())
+    }
+
+    @Test
+    fun `text reflete a edição e preserva todo o resto byte a byte`() {
+        val s = EditorState("um\n\ndois\n\n\ntres\n")
+        s.focus(s.doc.blocks[1])
+        s.edit(TextFieldValue("DOIS!", TextRange(5)))
+        assertEquals("um\n\nDOIS!\n\n\ntres\n", s.text())
+    }
+
     // ---- splitAtCursor / mergeWithPreviousBlock ----
 
     @Test

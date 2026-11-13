@@ -11,6 +11,7 @@ import io.github.walterfr.jotmd.core.BlockIdSource
 import io.github.walterfr.jotmd.core.BlockType
 import io.github.walterfr.jotmd.core.DocState
 import io.github.walterfr.jotmd.core.parse
+import io.github.walterfr.jotmd.core.serialize
 import io.github.walterfr.jotmd.editor.ops.UndoFrame
 import io.github.walterfr.jotmd.editor.ops.UndoStack
 import io.github.walterfr.jotmd.editor.ops.mergeWithPrevious
@@ -42,6 +43,9 @@ class EditorState(initialText: String = "") {
         private set
     var editValue: TextFieldValue by mutableStateOf(TextFieldValue(""))
         private set
+
+    /** Documento inteiro como texto, byte a byte — o que vai pro arquivo ao gravar. */
+    fun text(): String = serialize(doc)
 
     fun load(text: String) {
         ids = BlockIdSource()

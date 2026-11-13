@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,10 +29,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import io.github.walterfr.jotmd.editor.EditorScreen
 import io.github.walterfr.jotmd.editor.EditorState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+private const val AUTOSAVE_DELAY_MS = 1000L
+
+/**
+ * OpenDocument pede leitura E escrita persistentes na própria intent. Sem os
+ * flags, o seletor devolve um URI só de leitura e `openOutputStream` falha.
+ */
+private class OpenMarkdown : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: android.content.Context, input: Array<String>): Intent =
+        super.createIntent(context, input).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,15 +66,17 @@ class MainActivity : ComponentActivity() {
  * seleção. Enter divide bloco, Backspace no início funde, `↑`/`↓` navegam,
  * Ctrl+Z/Ctrl+Shift+Z desfazem — ver BlockEditor.kt.
  *
- * Ainda sem gravar de volta no arquivo: falta decidir onde entra a escrita via
- * SAF (a cada edição? só ao sair? um botão "Salvar"?) — questão de produto,
- * não téorica, não travo nisso.
+ * Autosave: 1s depois da última mudança, e de novo ao sair do app (ON_STOP).
+ * Só grava arquivo aberto por SAF — o documento de referência embutido nos
+ * assets não tem onde gravar. Falha de escrita aparece no cabeçalho.
  */
 @Composable
 private fun EditorHostScreen() {
     val context = LocalContext.current
     val editorState = remember { EditorState() }
     var title by remember { mutableStateOf("typora-ref.md") }
+    var session by remember { mutableStateOf<FileSession?>(null) }
+    var saveFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val text = withContext(Dispatchers.IO) {
@@ -64,22 +85,44 @@ private fun EditorHostScreen() {
         editorState.load(text)
     }
 
-    val open = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
+    // Reinicia a cada mudança em doc: só chega ao save quem ficou 1s sem editar.
+    LaunchedEffect(editorState.doc, session) {
+        val s = session ?: return@LaunchedEffect
+        delay(AUTOSAVE_DELAY_MS)
+        val text = editorState.text()
+        saveFailed = runCatching { withContext(Dispatchers.IO) { s.saveIfChanged(text) } }.isFailure
+    }
+
+    // Matar o app dentro da janela do debounce perderia a última edição.
+    val lifecycle = (context as ComponentActivity).lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                val s = session ?: return@LifecycleEventObserver
+                // ponytail: escrita síncrona na main — arquivo de texto pequeno.
+                saveFailed = runCatching { s.saveIfChanged(editorState.text()) }.isFailure
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    val open = rememberLauncherForActivityResult(OpenMarkdown()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching {
             context.contentResolver.takePersistableUriPermission(
                 uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
         }
         val text = context.contentResolver.openInputStream(uri)
             ?.bufferedReader()
             ?.use { it.readText() }
             ?: return@rememberLauncherForActivityResult
-        title = uri.lastPathSegment?.substringAfterLast('/') ?: "documento"
+        title = displayName(context.contentResolver, uri) ?: "documento"
         editorState.load(text)
+        saveFailed = false
+        session = FileSession(context.contentResolver, uri, lastSaved = text)
     }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -92,6 +135,9 @@ private fun EditorHostScreen() {
                 modifier = Modifier.weight(1f).padding(start = 8.dp),
                 style = MaterialTheme.typography.titleMedium,
             )
+            if (saveFailed) {
+                Text("Erro ao salvar", color = MaterialTheme.colorScheme.error)
+            }
             TextButton(onClick = { open.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) {
                 Text("Abrir")
             }
