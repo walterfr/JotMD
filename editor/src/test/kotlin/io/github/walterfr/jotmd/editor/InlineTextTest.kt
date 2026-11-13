@@ -125,6 +125,17 @@ class InlineTextTest {
     }
 
     @Test
+    fun `soleImage só aceita parágrafo que é apenas uma imagem`() {
+        assertEquals(ImageRef("gato", "a.png"), soleImage("![gato](a.png)"))
+        assertEquals(ImageRef("gato", "a.png"), soleImage("  ![gato](a.png \"título\")\n"))
+        // Texto ao redor sumiria da tela se o parágrafo virasse só o preview:
+        // começa com "![" e termina com ")", mas tem mais coisa dentro.
+        assertEquals(null, soleImage("![logo](a.png) é o logo (2024)"))
+        assertEquals(null, soleImage("antes ![gato](a.png)"))
+        assertEquals(null, soleImage("![a](a.png) ![b](b.png)"))
+    }
+
+    @Test
     fun `imagens expõem alt e destino para preview`() {
         assertEquals(
             listOf(ImageRef("gato", "images/gato.png")),

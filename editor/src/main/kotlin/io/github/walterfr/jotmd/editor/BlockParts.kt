@@ -152,8 +152,17 @@ private fun List<String>.padTo(size: Int): List<String> =
 
 data class ImageRef(val alt: String, val destination: String)
 
+private val IMAGE_REGEX = Regex("""!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^)]*["'])?\)""")
+
 fun imageRefs(source: String): List<ImageRef> =
-    Regex("""!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^)]*["'])?\)""")
-        .findAll(source)
+    IMAGE_REGEX.findAll(source)
         .map { ImageRef(it.groupValues[1], it.groupValues[2]) }
         .toList()
+
+/**
+ * A imagem, se o parágrafo INTEIRO for só ela. Checar "começa com `![` e termina
+ * com `)`" não basta: `![a](b.png) é o logo (2024)` passa nisso, e trocar o
+ * parágrafo pelo preview apagaria o resto do texto da tela.
+ */
+fun soleImage(source: String): ImageRef? =
+    IMAGE_REGEX.matchEntire(source.trim())?.let { ImageRef(it.groupValues[1], it.groupValues[2]) }

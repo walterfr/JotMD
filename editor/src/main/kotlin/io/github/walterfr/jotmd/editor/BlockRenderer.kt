@@ -54,11 +54,9 @@ fun BlockRenderer(block: Block, modifier: Modifier = Modifier) {
         BlockType.CODE_INDENTED -> CodeBlock(block.source, fenced = false, modifier = modifier)
         BlockType.HORIZONTAL_RULE -> RuleBlock(modifier)
         BlockType.PARAGRAPH -> {
-            val images = remember(block.source) { imageRefs(block.source) }
-            if (images.size == 1 && block.source.trim().startsWith("![") &&
-                block.source.trim().endsWith(")")
-            ) {
-                ImagePreview(images.single(), modifier)
+            val image = remember(block.source) { soleImage(block.source) }
+            if (image != null) {
+                ImagePreview(image, modifier)
             } else {
                 ParagraphBlock(block.source, modifier)
             }
