@@ -1,8 +1,5 @@
 package io.github.walterfr.jotmd.editor
 
-import android.graphics.BitmapFactory
-import android.net.Uri
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -17,19 +14,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.runtime.produceState
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.AnnotatedString
@@ -74,7 +66,7 @@ fun BlockRenderer(
 
 }
 
-private val bodyStyle = TextStyle(
+internal val bodyStyle =TextStyle(
     color = MdTokens.text,
     fontSize = MdTokens.base,
     lineHeight = MdTokens.bodyLineHeight,
@@ -156,46 +148,6 @@ private fun ListBlock(source: String, modifier: Modifier = Modifier, onToggleTas
                 BasicText(row.content, style = bodyStyle)
             }
 
-        }
-    }
-}
-
-@Composable
-private fun ImagePreview(image: ImageRef, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, image.destination) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.openInputStream(Uri.parse(image.destination)).use {
-                    BitmapFactory.decodeStream(it)
-                }
-            }.getOrNull()
-        }
-    }
-    Box(
-        modifier
-            .fillMaxWidth()
-            .background(MdTokens.fenceBackground, RoundedCornerShape(MdTokens.cornerRadius))
-            .border(1.dp, MdTokens.codeBorder, RoundedCornerShape(MdTokens.cornerRadius))
-            .padding(12.dp),
-    ) {
-        Column {
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = image.alt,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
-                )
-            } else {
-                BasicText(
-                    AnnotatedString("[imagem] ${image.alt.ifBlank { "Imagem" }}"),
-                    style = bodyStyle.copy(fontWeight = FontWeight.Medium),
-                )
-            }
-            BasicText(
-                AnnotatedString(image.destination),
-                style = bodyStyle.copy(color = MdTokens.muted, fontSize = MdTokens.base * 0.8f),
-            )
         }
     }
 }
