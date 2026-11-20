@@ -27,6 +27,17 @@ class EditorStateTest {
     }
 
     @Test
+    fun `commit atrasado do IME no campo antigo não sobrescreve o bloco recém-focado`() {
+        // Visto no tablet: SwiftKey compondo "Fim", toque na lista, a lista virou "Fim".
+        val s = EditorState("- um\n\nFim\n")
+        val (lista, fim) = s.doc.blocks
+        s.focus(fim)
+        s.focus(lista)
+        s.edit(TextFieldValue("Fim", TextRange(3)), from = fim.id)
+        assertEquals("- um\n\nFim\n", s.text())
+    }
+
+    @Test
     fun `trailing do bloco não muda com a edição`() {
         val s = EditorState("um\n\ndois\n")
         s.focus(s.doc.blocks[0])
@@ -114,6 +125,38 @@ class EditorStateTest {
         s.focus(s.doc.blocks[1])
         s.edit(TextFieldValue("DOIS!", TextRange(5)))
         assertEquals("um\n\nDOIS!\n\n\ntres\n", s.text())
+    }
+
+    @Test
+    fun `enter em lista continua o item e enter no item vazio sai pra um parágrafo`() {
+        val s = EditorState("- um\n\nfim\n")
+        s.focus(s.doc.blocks[0])
+        assertTrue(s.smartEnterAtCursor())
+        assertEquals("- um\n- ", s.doc.blocks[0].source)
+
+        assertTrue(s.smartEnterAtCursor()) // item vazio
+        assertEquals(listOf("- um", "", "fim"), s.doc.blocks.map { it.source })
+        assertEquals(BlockType.PARAGRAPH, s.doc.blocks[1].type)
+        assertEquals(s.doc.blocks[1].id, s.focusedId)
+        assertEquals("- um\n\n\n\nfim\n", s.text())
+    }
+
+    @Test
+    fun `enter em parágrafo não é tratado como lista`() {
+        val s = EditorState("texto\n")
+        s.focus(s.doc.blocks[0])
+        assertEquals(false, s.smartEnterAtCursor())
+    }
+
+    @Test
+    fun `undo desfaz a saída da lista`() {
+        val s = EditorState("- um\n")
+        s.focus(s.doc.blocks[0])
+        s.smartEnterAtCursor()
+        Thread.sleep(600) // passa da janela de coalescência: dois checkpoints
+        s.smartEnterAtCursor()
+        s.undo()
+        assertEquals(listOf("- um\n- "), s.doc.blocks.map { it.source })
     }
 
     // ---- splitAtCursor / mergeWithPreviousBlock ----

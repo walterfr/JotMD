@@ -16,6 +16,8 @@ import io.github.walterfr.jotmd.editor.ops.UndoFrame
 import io.github.walterfr.jotmd.editor.ops.UndoStack
 import io.github.walterfr.jotmd.editor.ops.mergeWithPrevious
 import io.github.walterfr.jotmd.editor.ops.reparse
+import io.github.walterfr.jotmd.editor.ops.SmartEnter
+import io.github.walterfr.jotmd.editor.ops.smartEnter
 import io.github.walterfr.jotmd.editor.ops.splitAt
 import io.github.walterfr.jotmd.editor.ops.toggleTask
 
@@ -62,7 +64,13 @@ class EditorState(initialText: String = "") {
         editValue = TextFieldValue(block.source, TextRange(block.source.length))
     }
 
-    fun edit(value: TextFieldValue) {
+    /**
+     * [from] = bloco cujo campo emitiu o valor. O IME (SwiftKey) pode entregar o
+     * commit da composição ao campo antigo DEPOIS que um toque já trocou o foco;
+     * sem o filtro esse texto sobrescreveria o bloco recém-focado.
+     */
+    fun edit(value: TextFieldValue, from: BlockId? = focusedId) {
+        if (from == null || from != focusedId) return
         recordUndoCheckpoint()
         editValue = value
         syncDocFromEdit()
@@ -91,6 +99,34 @@ class EditorState(initialText: String = "") {
     }
 
     /** Enter no cursor: divide o bloco focado em dois e reparseia a cauda (Armadilha 1). */
+    /**
+     * Enter em lista/numerada/tarefa/citação (ver [smartEnter]). Devolve false
+     * quando a linha do cursor não tem marcador — o chamador segue o Enter padrão.
+     */
+    fun smartEnterAtCursor(): Boolean {
+        val id = focusedId ?: return false
+        val index = doc.blocks.indexOfFirst { it.id == id }
+        if (index < 0 || !editValue.selection.collapsed) return false
+        when (val r = smartEnter(editValue.text, editValue.selection.start) ?: return false) {
+            is SmartEnter.Insert -> edit(TextFieldValue(r.text, TextRange(r.cursor)))
+            is SmartEnter.Exit -> {
+                recordUndoCheckpoint()
+                val block = doc.blocks[index]
+                val paragraph = Block(ids.next(), BlockType.PARAGRAPH, "", block.trailing)
+                val replacement = if (r.text.isEmpty()) {
+                    // Só havia o item vazio: a própria estrutura vira o parágrafo.
+                    listOf(paragraph)
+                } else {
+                    listOf(block.copy(source = r.text, trailing = "\n\n"), paragraph)
+                }
+                doc = doc.copy(blocks = doc.blocks.subList(0, index) + replacement + doc.blocks.subList(index + 1, doc.blocks.size))
+                focusedId = paragraph.id
+                editValue = TextFieldValue("", TextRange(0))
+            }
+        }
+        return true
+    }
+
     fun splitAtCursor() {
         val id = focusedId ?: return
         val index = doc.blocks.indexOfFirst { it.id == id }

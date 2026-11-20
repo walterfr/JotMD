@@ -44,7 +44,7 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
         LaunchedEffect(block.id) { focusRequester.requestFocus() }
         BasicTextField(
             value = state.editValue,
-            onValueChange = state::edit,
+            onValueChange = { state.edit(it, block.id) },
             modifier = modifier
                 .fillMaxWidth()
                 .focusRequester(focusRequester)
@@ -68,10 +68,9 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
 /**
  * Enter, Backspace no início, `↑`/`↓` nas bordas, Ctrl+Z/Ctrl+Shift+Z.
  *
- * Enter só divide bloco em PARAGRAPH/HEADING — nos outros tipos (cerca de
- * código, citação, lista, tabela) vira newline literal. Continuação
- * inteligente (novo item de lista, `>` automático) não está em F3; sem ela,
- * interceptar Enter ali só atrapalharia sem ganhar nada.
+ * Enter em lista/citação continua o marcador ([EditorState.smartEnterAtCursor]);
+ * em PARAGRAPH/HEADING divide o bloco; nos outros tipos (cerca de código,
+ * tabela) vira newline literal.
  */
 private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
@@ -87,6 +86,8 @@ private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolea
             state.undo()
             true
         }
+        event.key == Key.Enter && cursor.collapsed && hasLineMarkers(block.type) &&
+            state.smartEnterAtCursor() -> true
         event.key == Key.Enter && cursor.collapsed && isSplittable(block.type) -> {
             state.splitAtCursor()
             true
@@ -108,6 +109,10 @@ private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolea
 }
 
 private fun isSplittable(type: BlockType) = type == BlockType.PARAGRAPH || type == BlockType.HEADING
+
+/** Blocos cujo Enter continua o marcador da linha, como o Typora (ver ops/SmartEnter.kt). */
+private fun hasLineMarkers(type: BlockType) =
+    type == BlockType.UNORDERED_LIST || type == BlockType.ORDERED_LIST || type == BlockType.BLOCKQUOTE
 
 private val sourceStyle = TextStyle(
     color = MdTokens.text,

@@ -30,6 +30,28 @@ que esconde/revela por span conforme a posição do cursor — caro e instável 
 IME (Armadilha 4 do contexto). Decisão: ficar na aproximação por bloco em F2/F3,
 reavaliar em F6.
 
+## Enter em listas e citações — observado no Typora
+
+Método: caixa-preta. Digitar sequências num arquivo vazio do Typora instalado,
+salvar, ler o `.md` gravado. Nada do código do Typora é lido: ele é proprietário,
+e o executável desliga a inspeção de propósito (fuses `RunAsNode` e
+`EnableNodeCliInspectArguments` desligados, conferidos com `rea
+inspect-electron-fuses`). O JotMD reproduz o comportamento, não a implementação.
+
+| Situação | O Typora grava |
+|---|---|
+| Enter em item com texto | novo item, mesmo marcador e indentação, lista compacta (`- um` / `- dois`) |
+| Enter no meio do item | o texto depois do cursor vai para o novo item |
+| Enter em item vazio | sai da lista: linha em branco e parágrafo |
+| Lista numerada | o próximo número (`1. a` / `2. b`) |
+| Tarefa | novo item sempre desmarcado (`- [ ] `), mesmo depois de `[x]` |
+| Citação | novo parágrafo **dentro** da citação: `> a` / `>` / `> b` |
+| Citação vazia | sai, e o separador `>` vazio sai junto |
+| `**`, `` ` `` | sem fechamento automático |
+
+Implementado em `editor/ops/SmartEnter.kt`. Ainda não observado: Backspace no
+início de item/heading (o teste saiu contaminado e foi descartado).
+
 ## Duas armadilhas do `jetbrains/markdown`
 
 Ambas custaram bug real na F1. Ficam aqui porque nenhuma aparece na API.
