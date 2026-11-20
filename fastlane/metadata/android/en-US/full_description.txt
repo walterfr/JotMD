@@ -1,0 +1,24 @@
+JotMD is a native Markdown reader and editor for Android inspired by Typora, built 100% with Jetpack Compose and no WebView.
+
+Block-based hybrid engine
+- Only the focused block opens as plain text showing raw Markdown syntax; all other blocks stay rendered cleanly inline.
+- The plain Markdown string remains the single source of truth, preserving original formatting byte for byte.
+- Source mode to view and edit the full document in raw Markdown.
+
+Smart editing and extended Markdown
+- Typora-style smart editing: automatic continuation of lists, numbered lists, tasks, and blockquotes on Enter, Tab/Shift+Tab indentation, empty-pair cleanup, and coalesced undo/redo.
+- Inline YAML front matter block at the top of notes.
+- Aligned GFM tables, task lists with clickable checkboxes, fenced code blocks with language labels, and local image previews.
+- GitHub Alerts ([!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]) and ==highlight== syntax.
+
+Workspace, search, and navigation
+- Multi-tab editing to keep multiple notes open with preserved state.
+- Root folder browser with clickable [[wikilinks]] and #tags.
+- Folder-wide full-text search powered by SQLite FTS4 (accent-folding aware, with highlighted snippets).
+- In-note find and replace.
+
+Themes, export, and privacy
+- Light theme (github) and dark theme (night).
+- Export notes to standalone HTML and PDF through the system file picker.
+- File and folder access strictly via Storage Access Framework (SAF) with autosave and no MANAGE_EXTERNAL_STORAGE permission.
+- 100% offline, no ads, no tracking, open-source under the MIT license.

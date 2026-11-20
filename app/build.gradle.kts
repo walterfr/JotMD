@@ -24,6 +24,12 @@ android {
 
     buildFeatures { compose = true }
 
+    dependenciesInfo {
+        // F-Droid exige APK sem bloco proprietário de metadados de dependências do AGP.
+        includeInApk = false
+        includeInBundle = false
+    }
+
     // O doc de referência é um só, versionado em docs/. Empacotar uma cópia
     // seria a segunda fonte de verdade a divergir.
     sourceSets["main"].assets.srcDir(rootProject.file("docs"))

@@ -1,0 +1,26 @@
+# Receita F-Droid para submissão em fdroiddata (metadados Fastlane em fastlane/metadata/android/).
+Categories:
+  - Writing
+  - Reading
+License: MIT
+AuthorName: Walter Rebouças
+SourceCode: https://github.com/walterfr/JotMD
+IssueTracker: https://github.com/walterfr/JotMD/issues
+
+RepoType: git
+Repo: https://github.com/walterfr/JotMD.git
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    # ATENÇÃO: ao publicar a release, atualizar/mover a tag (a tag v0.1.0 atual antecede dependenciesInfo e recursos pós-v0.1.0).
+    commit: v0.1.0
+    subdir: app
+    gradle:
+      - yes
+
+# Se mantiver o prefixo "v" nas tags (ex.: v0.1.0), considere AutoUpdateMode: Version v%v no fdroiddata.
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1

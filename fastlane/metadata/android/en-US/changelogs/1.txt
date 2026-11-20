@@ -1,0 +1,6 @@
+Initial release 0.1.0:
+- Native block-based Markdown reader and editor in Jetpack Compose (no WebView)
+- SAF file and folder access with autosave
+- Multi-tab support, [[wikilinks]], #tags, and folder FTS4 full-text search
+- In-note find/replace, YAML front matter, GFM tables, tasks, alerts, and ==highlight==
+- Light/dark themes, source mode, and HTML/PDF export

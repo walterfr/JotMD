@@ -1,0 +1,24 @@
+JotMD é um leitor e editor de Markdown nativo para Android com experiência inspirada no Typora, construído 100% em Jetpack Compose e sem uso de WebView.
+
+Motor híbrido por blocos
+- Apenas o bloco em foco abre como texto simples com a sintaxe Markdown crua; todos os outros blocos permanecem renderizados de forma limpa e legível.
+- A string Markdown pura é sempre a fonte da verdade, preservando a formatação original byte a byte.
+- Modo código-fonte para visualizar e editar o documento inteiro em Markdown cru.
+
+Edição inteligente e Markdown estendido
+- Edição estilo Typora: continuação automática de listas, listas numeradas, tarefas e citações com Enter, recuo com Tab/Shift+Tab, remoção de pares vazios e undo/redo com coalescência.
+- YAML front matter exibido inline no topo da nota.
+- Tabelas GFM com alinhamento por coluna, listas de tarefas com checkboxes clicáveis, cercas de código com indicação de linguagem e preview de imagens locais.
+- GitHub Alerts ([!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]) e marca-texto com ==highlight==.
+
+Organização, busca e navegação
+- Multi-abas para manter várias notas abertas simultaneamente com estado preservado.
+- Navegação por pasta de notas com suporte a [[wikilinks]] e #tags clicáveis.
+- Busca full-text na pasta com SQLite FTS4 (incluindo termos com acentuação e trechos com destaque).
+- Busca e substituição local dentro da nota aberta.
+
+Temas, exportação e privacidade
+- Tema claro (github) e tema escuro (night).
+- Exportação para HTML standalone e PDF diretamente pelo seletor do sistema.
+- Acesso a arquivos e pastas exclusivamente via Storage Access Framework (SAF), com salvamento automático e sem permissão MANAGE_EXTERNAL_STORAGE.
+- 100% offline, sem anúncios, sem rastreamento e código aberto sob licença MIT.

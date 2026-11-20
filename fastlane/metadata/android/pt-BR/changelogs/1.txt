@@ -1,0 +1,6 @@
+Versão inicial 0.1.0:
+- Leitor e editor Markdown nativo por blocos em Jetpack Compose (sem WebView)
+- Acesso a arquivos e pastas via SAF com autosave
+- Multi-abas, [[wikilinks]], #tags e busca full-text FTS4 na pasta
+- Busca/substituição na nota, YAML front matter, tabelas GFM, tarefas, alertas e ==highlight==
+- Tema claro/escuro, modo código-fonte e exportação HTML/PDF
