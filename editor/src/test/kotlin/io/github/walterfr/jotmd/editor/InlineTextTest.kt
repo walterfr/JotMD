@@ -124,6 +124,51 @@ class InlineTextTest {
         assertEquals(listOf(listOf("A", "10", "ok")), table.rows)
     }
 
+    private fun links(s: androidx.compose.ui.text.AnnotatedString) =
+        s.getLinkAnnotations(0, s.length).map {
+            Triple(s.text.substring(it.start, it.end), (it.item as androidx.compose.ui.text.LinkAnnotation.Url).url, it.start)
+        }
+
+    @Test
+    fun `wikilink some com os colchetes e vira link interno`() {
+        val s = inlineText("veja [[nota|apelido]] e [[outra]].")
+        assertEquals("veja apelido e outra.", s.text)
+        assertEquals(
+            listOf(Triple("apelido", "jotmd:wiki:nota", 5), Triple("outra", "jotmd:wiki:outra", 15)),
+            links(s),
+        )
+    }
+
+    @Test
+    fun `wikilink com âncora mostra a âncora e aponta só pra nota`() {
+        val s = inlineText("[[nota#Seção]] [[#topo]]")
+        assertEquals("nota#Seção #topo", s.text)
+        assertEquals(listOf("jotmd:wiki:nota", "jotmd:wiki:"), links(s).map { it.second })
+    }
+
+    @Test
+    fun `tag fica visível com cerquilha e vira link de busca`() {
+        val s = inlineText("um **#forte** e #a/b (#c)")
+        assertEquals("um #forte e #a/b (#c)", s.text)
+        assertEquals(
+            listOf("jotmd:tag:forte", "jotmd:tag:a/b", "jotmd:tag:c"),
+            links(s).map { it.second },
+        )
+    }
+
+    @Test
+    fun `dentro de código wikilink e tag ficam literais`() {
+        val s = inlineText("`[[x]] #y`")
+        assertEquals("[[x]] #y", s.text)
+        assertEquals(emptyList(), links(s))
+    }
+
+    @Test
+    fun `wikilink em item de lista também`() {
+        val rows = listRows("- ver [[nota]]\n- [ ] #tarefa\n")
+        assertEquals(listOf("ver nota", "#tarefa"), rows.map { it.content.text })
+    }
+
     @Test
     fun `soleImage só aceita parágrafo que é apenas uma imagem`() {
         assertEquals(ImageRef("gato", "a.png"), soleImage("![gato](a.png)"))

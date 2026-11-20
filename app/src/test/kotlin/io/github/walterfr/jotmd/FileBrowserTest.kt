@@ -21,4 +21,14 @@ class FileBrowserTest {
         )
         assertEquals(listOf("alfa", "Zeta", "A.md", "b.md"), r.map { it.name })
     }
+
+    @Test fun wikilinkAchaArquivoPeloNomeSemExtensao() {
+        val nodes = listOf(n("notas", true), n("Plano de Aula.md"), n("receita.markdown"))
+        assertEquals("Plano de Aula.md", resolveWikilink("plano de aula", nodes)?.name)
+        assertEquals("receita.markdown", resolveWikilink("receita", nodes)?.name)
+        assertEquals("receita.markdown", resolveWikilink("pasta/receita", nodes)?.name)
+        assertEquals("Plano de Aula.md", resolveWikilink("Plano de Aula.md", nodes)?.name)
+        assertEquals(null, resolveWikilink("notas", nodes)) // pasta não é nota
+        assertEquals(null, resolveWikilink("inexistente", nodes))
+    }
 }

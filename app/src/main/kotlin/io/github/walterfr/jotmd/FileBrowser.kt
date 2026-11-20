@@ -22,6 +22,24 @@ fun isMarkdownName(name: String): Boolean {
     return n.endsWith(".md") || n.endsWith(".markdown")
 }
 
+/**
+ * Arquivo apontado por `[[target]]`: nome sem extensão igual ao alvo, sem
+ * diferenciar caixa. `[[pasta/nota]]` usa só o último segmento e `[[nota.md]]`
+ * também vale.
+ *
+ * ponytail: dois arquivos com o mesmo nome em pastas diferentes → vence o
+ * primeiro da listagem. Upgrade: casar o caminho relativo quando o alvo tiver `/`.
+ */
+fun resolveWikilink(target: String, nodes: List<DocNode>): DocNode? {
+    val wanted = target.substringAfterLast('/').trim()
+    return nodes.firstOrNull { node ->
+        !node.isDir && (
+            node.name.equals(wanted, ignoreCase = true) ||
+                node.name.substringBeforeLast('.').equals(wanted, ignoreCase = true)
+            )
+    }
+}
+
 /** Filhos de uma pasta: só pastas e markdown, pastas primeiro, A-Z sem caixa. */
 fun sortAndFilter(children: List<DocNode>): List<DocNode> =
     children

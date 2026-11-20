@@ -39,7 +39,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import io.github.walterfr.jotmd.editor.TAG_URI
+import io.github.walterfr.jotmd.editor.WIKI_URI
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +110,8 @@ private fun EditorHostScreen() {
     var title by remember { mutableStateOf("typora-ref.md") }
     var session by remember { mutableStateOf<FileSession?>(null) }
     var saveFailed by remember { mutableStateOf(false) }
+    // Aviso transitório no cabeçalho (ex.: wikilink sem arquivo). Some ao abrir outro.
+    var notice by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         val text = withContext(Dispatchers.IO) {
@@ -151,6 +159,7 @@ private fun EditorHostScreen() {
             title = displayName(context.contentResolver, uri) ?: "documento"
             editorState.load(text)
             saveFailed = false
+            notice = null
             session = FileSession(context.contentResolver, uri, lastSaved = text)
         }
     }
@@ -210,6 +219,32 @@ private fun EditorHostScreen() {
         delay(200)
         hits = runCatching { withContext(Dispatchers.IO) { index.search(query) } }.getOrDefault(emptyList())
     }
+
+    // Links do texto renderizado. `[[nota]]` e `#tag` chegam como URIs internas
+    // (WIKI_URI/TAG_URI); interceptar no LocalUriHandler evita passar callback
+    // por BlockRenderer/ListBlock/etc. Qualquer outro link vai pro handler padrão.
+    val defaultUriHandler = LocalUriHandler.current
+    val onLink: (String) -> Unit = { uri ->
+        when {
+            uri.startsWith(WIKI_URI) -> {
+                val target = uri.removePrefix(WIKI_URI)
+                val r = root
+                val node = resolveWikilink(target, nodes)
+                when {
+                    target.isEmpty() -> Unit // [[#seção]]: a própria nota, nada a abrir
+                    r == null || node == null -> notice = "Nota não encontrada: $target"
+                    else -> openUri(DocumentsContract.buildDocumentUriUsingTree(r, node.docId))
+                }
+            }
+            uri.startsWith(TAG_URI) -> {
+                query = "#" + uri.removePrefix(TAG_URI)
+                scope.launch { drawerState.open() }
+            }
+            else -> runCatching { defaultUriHandler.openUri(uri) }
+        }
+    }
+    val onLinkRef = rememberUpdatedState(onLink)
+    val uriHandler = remember { object : UriHandler { override fun openUri(uri: String) = onLinkRef.value(uri) } }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -301,12 +336,15 @@ private fun EditorHostScreen() {
                 if (saveFailed) {
                     Text("Erro ao salvar", color = MaterialTheme.colorScheme.error)
                 }
+                notice?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 TextButton(onClick = { open.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) {
                     Text("Abrir")
                 }
             }
             HorizontalDivider()
-            EditorScreen(editorState, Modifier.weight(1f))
+            CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                EditorScreen(editorState, Modifier.weight(1f))
+            }
         }
     }
 }

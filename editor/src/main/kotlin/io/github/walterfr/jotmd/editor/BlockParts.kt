@@ -26,15 +26,16 @@ data class ListRow(
 
 fun listRows(source: String): List<ListRow> {
     val out = mutableListOf<ListRow>()
-    collectRows(astOf(source), source, depth = 0, out = out)
+    collectRows(astOf(source), Ctx.of(source), depth = 0, out = out)
     return out
 }
 
-private fun collectRows(node: ASTNode, src: String, depth: Int, out: MutableList<ListRow>) {
+private fun collectRows(node: ASTNode, ctx: Ctx, depth: Int, out: MutableList<ListRow>) {
+    val src = ctx.src
     for (child in node.children) {
         when (child.type) {
             MarkdownElementTypes.UNORDERED_LIST,
-            MarkdownElementTypes.ORDERED_LIST -> collectRows(child, src, depth, out)
+            MarkdownElementTypes.ORDERED_LIST -> collectRows(child, ctx, depth, out)
 
             MarkdownElementTypes.LIST_ITEM -> {
                 val marker = (
@@ -55,7 +56,7 @@ private fun collectRows(node: ASTNode, src: String, depth: Int, out: MutableList
                     content = buildAnnotatedString {
                         for (part in child.children) {
                             if (part.type == MarkdownElementTypes.PARAGRAPH) {
-                                appendChildren(part, src, emptySet())
+                                appendChildren(part, ctx, emptySet())
                             }
                         }
                     },
@@ -65,7 +66,7 @@ private fun collectRows(node: ASTNode, src: String, depth: Int, out: MutableList
                     if (part.type == MarkdownElementTypes.UNORDERED_LIST ||
                         part.type == MarkdownElementTypes.ORDERED_LIST
                     ) {
-                        collectRows(part, src, depth + 1, out)
+                        collectRows(part, ctx, depth + 1, out)
                     }
                 }
             }
