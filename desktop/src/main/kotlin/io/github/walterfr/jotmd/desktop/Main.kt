@@ -57,6 +57,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.walterfr.jotmd.core.exportToHtml
+import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
 import io.github.walterfr.jotmd.editor.EditorScreen
 import io.github.walterfr.jotmd.editor.MdTokens
@@ -352,18 +353,43 @@ private fun DesktopShell(
                 onExportHtml = {
                     val tab = activeTab ?: return@HeaderBar
                     onLaunch {
-                        val chosen = pickHtmlSaveFile(ownerWindow, rootDir, tab.title) ?: return@onLaunch
+                        val chosen = pickExportSaveFile(
+                            owner = ownerWindow,
+                            dialogTitle = "Exportar HTML",
+                            initialDir = rootDir,
+                            defaultTitle = tab.title,
+                            extensions = listOf(".html", ".htm"),
+                        ) ?: return@onLaunch
                         val html = exportToHtml(tab.editorState.text(), tab.title, isDark)
                         val ok = runCatching {
                             withContext(Dispatchers.IO) {
                                 Files.writeString(chosen, html, StandardCharsets.UTF_8)
                             }
                         }.isSuccess
-                        if (ok) {
-                            showNotice("HTML exportado: ${chosen.fileName}", isError = false)
-                        } else {
-                            showNotice("Erro ao exportar HTML", isError = true)
-                        }
+                        showNotice(
+                            if (ok) "HTML exportado: ${chosen.fileName}" else "Erro ao exportar HTML",
+                            isError = !ok,
+                        )
+                    }
+                },
+                onExportPdf = {
+                    val tab = activeTab ?: return@HeaderBar
+                    onLaunch {
+                        val chosen = pickExportSaveFile(
+                            owner = ownerWindow,
+                            dialogTitle = "Exportar PDF",
+                            initialDir = rootDir,
+                            defaultTitle = tab.title,
+                            extensions = listOf(".pdf"),
+                        ) ?: return@onLaunch
+                        val pdf = exportToPdf(tab.editorState.text(), tab.title)
+                        val ok = runCatching {
+                            withContext(Dispatchers.IO) { Files.write(chosen, pdf) }
+                        }.isSuccess
+                        showNotice(
+                            if (ok) "PDF exportado: ${chosen.fileName}" else "Erro ao exportar PDF",
+                            isError = !ok,
+                        )
                     }
                 },
                 onToggleSource = { activeTab?.editorState?.toggleSourceMode() },
@@ -556,6 +582,7 @@ private fun HeaderBar(
     onSave: () -> Unit,
     onToggleFind: () -> Unit,
     onExportHtml: () -> Unit,
+    onExportPdf: () -> Unit,
     onToggleSource: () -> Unit,
     onToggleTheme: () -> Unit,
 ) {
@@ -574,6 +601,7 @@ private fun HeaderBar(
         TextButton(onClick = onSave) { Text("Salvar") }
         TextButton(onClick = onToggleFind) { Text(if (findOpen) "Fechar busca" else "Buscar") }
         TextButton(onClick = onExportHtml) { Text("Exportar HTML") }
+        TextButton(onClick = onExportPdf) { Text("Exportar PDF") }
         TextButton(onClick = onToggleSource) {
             Text(if (activeTab?.editorState?.isSourceMode == true) "Visual" else "</>")
         }
@@ -778,18 +806,21 @@ private suspend fun pickMarkdownFile(
     }
 }
 
-private suspend fun pickHtmlSaveFile(
+private suspend fun pickExportSaveFile(
     owner: Frame,
+    dialogTitle: String,
     initialDir: Path?,
     defaultTitle: String,
+    extensions: List<String>,
 ): Path? = suspendCoroutine { cont ->
+    val primaryExt = extensions.first()
     SwingUtilities.invokeLater {
         val base = defaultTitle.substringBeforeLast('.').ifBlank { "documento" }
-        val dialog = FileDialog(owner, "Exportar HTML", FileDialog.SAVE).apply {
+        val dialog = FileDialog(owner, dialogTitle, FileDialog.SAVE).apply {
             directory = initialDir?.toString()
-            file = "$base.html"
+            file = "$base$primaryExt"
             filenameFilter = FilenameFilter { _, name ->
-                name.endsWith(".html", ignoreCase = true) || name.endsWith(".htm", ignoreCase = true)
+                extensions.any { name.endsWith(it, ignoreCase = true) }
             }
             isVisible = true
         }
@@ -798,10 +829,10 @@ private suspend fun pickHtmlSaveFile(
         val chosen = if (dir != null && file != null) {
             val raw = Path.of(dir, file)
             val name = raw.fileName.toString()
-            if (name.endsWith(".html", ignoreCase = true) || name.endsWith(".htm", ignoreCase = true)) {
+            if (extensions.any { name.endsWith(it, ignoreCase = true) }) {
                 raw
             } else {
-                raw.resolveSibling("$name.html")
+                raw.resolveSibling("$name$primaryExt")
             }
         } else {
             null

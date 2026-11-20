@@ -15,6 +15,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -65,6 +66,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import io.github.walterfr.jotmd.core.exportToHtml
+import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
 import io.github.walterfr.jotmd.editor.MdTokens
 import io.github.walterfr.jotmd.editor.TAG_URI
@@ -119,17 +121,39 @@ class MainActivity: ComponentActivity() {
             val prefs = remember { context.getSharedPreferences("jotmd", Context.MODE_PRIVATE) }
             var isDark by remember { mutableStateOf(prefs.getBoolean(PREF_DARK, false)) }
             MdTokens.isDark = isDark
-            MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
-                EditorHostScreen(
-                    prefs = prefs,
-                    isDark = isDark,
-                    onToggleTheme = {
-                        val next = !isDark
-                        isDark = next
-                        MdTokens.isDark = next
-                        prefs.edit().putBoolean(PREF_DARK, next).apply()
+            LaunchedEffect(isDark) {
+                enableEdgeToEdge(
+                    statusBarStyle = if (isDark) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT,
+                        )
+                    },
+                    navigationBarStyle = if (isDark) {
+                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    } else {
+                        SystemBarStyle.light(
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT,
+                        )
                     },
                 )
+            }
+            MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    EditorHostScreen(
+                        prefs = prefs,
+                        isDark = isDark,
+                        onToggleTheme = {
+                            val next = !isDark
+                            isDark = next
+                            MdTokens.isDark = next
+                            prefs.edit().putBoolean(PREF_DARK, next).apply()
+                        },
+                    )
+                }
             }
         }
     }
@@ -240,21 +264,34 @@ private fun EditorHostScreen(
         scope.launch { listStates[activeTab.id]?.animateScrollToItem(match.blockIndex) }
     }
 
+    fun saveExportedUri(uri: Uri, successNotice: String, write: (java.io.OutputStream) -> Unit) {
+        scope.launch {
+            val ok = runCatching {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use(write)
+                        ?: error("openOutputStream retornou null")
+                }
+            }.isSuccess
+            notice = if (ok) successNotice else "Erro ao exportar"
+        }
+    }
+
     val exportHtmlLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/html"),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val tab = tabManager.activeTab
-            val html = exportToHtml(tab.editorState.text(), tab.title, isDark)
-            val ok = runCatching {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(html) }
-                        ?: error("openOutputStream retornou null")
-                }
-            }.isSuccess
-            notice = if (ok) "HTML exportado" else "Erro ao exportar"
-        }
+        val tab = tabManager.activeTab
+        val html = exportToHtml(tab.editorState.text(), tab.title, isDark)
+        saveExportedUri(uri, "HTML exportado") { it.write(html.toByteArray(Charsets.UTF_8)) }
+    }
+
+    val exportPdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val tab = tabManager.activeTab
+        val pdf = exportToPdf(tab.editorState.text(), tab.title)
+        saveExportedUri(uri, "PDF exportado") { it.write(pdf) }
     }
 
     // Carrega [uri] numa aba (ou foca se já aberta). Grava antes o autosave
@@ -460,6 +497,7 @@ private fun EditorHostScreen(
                     text = activeTab.title,
                     modifier = Modifier.weight(1f).padding(start = 4.dp),
                     style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -490,6 +528,13 @@ private fun EditorHostScreen(
                     },
                     contentPadding = PaddingValues(horizontal = 6.dp),
                 ) { Text("HTML") }
+                TextButton(
+                    onClick = {
+                        val base = activeTab.title.substringBeforeLast('.').ifBlank { "documento" }
+                        exportPdfLauncher.launch("$base.pdf")
+                    },
+                    contentPadding = PaddingValues(horizontal = 6.dp),
+                ) { Text("PDF") }
                 TextButton(
                     onClick = onToggleTheme,
                     contentPadding = PaddingValues(horizontal = 6.dp),
