@@ -33,6 +33,9 @@ class FileSession(
     private var lastSaved: String,
 ) {
     /** Grava [text] se mudou. Devolve true se escreveu. Lança em falha de E/S. */
+    // Sincronizado: a troca de arquivo grava na main enquanto o autosave pode
+    // estar gravando em IO a mesma sessão.
+    @Synchronized
     fun saveIfChanged(text: String): Boolean {
         if (text == lastSaved) return false
         val out = resolver.openOutputStream(uri, "wt") ?: error("sem stream de escrita: $uri")

@@ -1,7 +1,18 @@
 package io.github.walterfr.jotmd
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -52,7 +63,19 @@ private class OpenMarkdown : ActivityResultContracts.OpenDocument() {
         )
 }
 
-class MainActivity : ComponentActivity() {
+private const val PREF_ROOT = "root_uri"
+
+/** Seletor de pasta com leitura+escrita persistentes (mesmo motivo do OpenMarkdown). */
+private class PickRoot : ActivityResultContracts.OpenDocumentTree() {
+    override fun createIntent(context: Context, input: Uri?): Intent =
+        super.createIntent(context, input).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
+}
+
+class MainActivity: ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -107,6 +130,27 @@ private fun EditorHostScreen() {
         onDispose { lifecycle.removeObserver(observer) }
     }
 
+    val scope = rememberCoroutineScope()
+
+    // Carrega [uri] no editor. Grava antes o autosave pendente do arquivo atual:
+    // o debounce de 1s seria cancelado pela troca e a última edição se perderia.
+    fun openUri(uri: Uri) {
+        session?.let { s ->
+            saveFailed = runCatching { s.saveIfChanged(editorState.text()) }.isFailure
+            // Não troca de arquivo se o anterior não gravou — senão a edição some.
+            if (saveFailed) return
+        }
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            } ?: return@launch
+            title = displayName(context.contentResolver, uri) ?: "documento"
+            editorState.load(text)
+            saveFailed = false
+            session = FileSession(context.contentResolver, uri, lastSaved = text)
+        }
+    }
+
     val open = rememberLauncherForActivityResult(OpenMarkdown()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching {
@@ -115,34 +159,88 @@ private fun EditorHostScreen() {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
         }
-        val text = context.contentResolver.openInputStream(uri)
-            ?.bufferedReader()
-            ?.use { it.readText() }
-            ?: return@rememberLauncherForActivityResult
-        title = displayName(context.contentResolver, uri) ?: "documento"
-        editorState.load(text)
-        saveFailed = false
-        session = FileSession(context.contentResolver, uri, lastSaved = text)
+        openUri(uri)
     }
 
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = title,
-                modifier = Modifier.weight(1f).padding(start = 8.dp),
-                style = MaterialTheme.typography.titleMedium,
+    // ponytail: SharedPreferences basta para uma string; DataStore não é
+    // dependência ainda. Trocar quando houver mais configurações.
+    val prefs = remember { context.getSharedPreferences("jotmd", Context.MODE_PRIVATE) }
+    var root by remember { mutableStateOf(prefs.getString(PREF_ROOT, null)?.let(Uri::parse)) }
+    var nodes by remember { mutableStateOf(emptyList<DocNode>()) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+
+    val pickRoot = rememberLauncherForActivityResult(PickRoot()) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
-            if (saveFailed) {
-                Text("Erro ao salvar", color = MaterialTheme.colorScheme.error)
-            }
-            TextButton(onClick = { open.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) {
-                Text("Abrir")
-            }
         }
-        HorizontalDivider()
-        EditorScreen(editorState, Modifier.weight(1f))
+        prefs.edit().putString(PREF_ROOT, uri.toString()).apply()
+        root = uri
+    }
+
+    // Relista ao trocar a raiz e a cada abertura do painel (arquivos mudam fora do app).
+    LaunchedEffect(root, drawerState.isOpen) {
+        val r = root ?: return@LaunchedEffect
+        if (!drawerState.isOpen && nodes.isNotEmpty()) return@LaunchedEffect
+        nodes = runCatching {
+            withContext(Dispatchers.IO) { listMarkdownTree(context.contentResolver, r) }
+        }.getOrDefault(emptyList())
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        // Arrastar na borda brigaria com seleção de texto; o painel abre pelo botão.
+        gesturesEnabled = drawerState.isOpen,
+        drawerContent = {
+            ModalDrawerSheet {
+                TextButton(onClick = { pickRoot.launch(null) }) {
+                    Text(if (root == null) "Escolher pasta" else "Trocar pasta")
+                }
+                HorizontalDivider()
+                LazyColumn {
+                    items(nodes, key = { it.docId }) { node ->
+                        Text(
+                            text = if (node.isDir) node.name + "/" else node.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !node.isDir) {
+                                    val r = root ?: return@clickable
+                                    openUri(
+                                        DocumentsContract.buildDocumentUriUsingTree(r, node.docId),
+                                    )
+                                    scope.launch { drawerState.close() }
+                                }
+                                .padding(start = (16 + 16 * node.depth).dp, top = 10.dp, end = 16.dp, bottom = 10.dp),
+                        )
+                    }
+                }
+            }
+        },
+    ) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("Pasta") }
+                Text(
+                    text = title,
+                    modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (saveFailed) {
+                    Text("Erro ao salvar", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = { open.launch(arrayOf("text/markdown", "text/plain", "*/*")) }) {
+                    Text("Abrir")
+                }
+            }
+            HorizontalDivider()
+            EditorScreen(editorState, Modifier.weight(1f))
+        }
     }
 }
