@@ -37,6 +37,7 @@ Requer JDK 17 e o Android SDK (`compileSdk 35`, `minSdk 26`).
 
 ## Documentos
 
+- `AGENTS.md` — estado atual, regras e armadilhas para agentes de código.
 - `AI_CONTEXT.md` — decisões de arquitetura e roadmap. Fonte única de verdade.
 - `DESIGN.md` — tokens visuais e modelo de foco medidos no Typora real.
 - `docs/typora-ref.md` — documento de referência; também é o corpus de teste.
