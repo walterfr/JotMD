@@ -2,7 +2,9 @@ package io.github.walterfr.jotmd.editor.ops
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Comportamento observado no Typora 1.x (ver DESIGN.md, "Enter em listas e citações"). */
 class SmartEnterTest {
@@ -57,5 +59,49 @@ class SmartEnterTest {
     fun `linha sem marcador não é com a gente`() {
         assertNull(enter("texto solto"))
         assertNull(enter("- a\ncontinuação"))
+    }
+
+    @Test
+    fun `smartSplitInline fecha e reabre spans abertos nos dois lados`() {
+        assertEquals(Triple("**olá **", "**mundo**", 2), smartSplitInline("**olá ", "mundo**"))
+        assertEquals(Triple("*itá*", "*lico*", 1), smartSplitInline("*itá", "lico*"))
+        assertEquals(Triple("~~ris~~", "~~cado~~", 2), smartSplitInline("~~ris", "cado~~"))
+        assertEquals(Triple("==mar==", "==cado==", 2), smartSplitInline("==mar", "cado=="))
+        assertEquals(Triple("`cód`", "`igo`", 1), smartSplitInline("`cód", "igo`"))
+        assertEquals(
+            Triple("linha 1\n**olá **", "**mundo**\nlinha 3", 2),
+            smartSplitInline("linha 1\n**olá ", "mundo**\nlinha 3"),
+        )
+    }
+
+    @Test
+    fun `smartSplitInline não confunde negrito com asterisco isolado`() {
+        assertNull(smartSplitInline("**negrito", " texto*"))
+        assertNull(smartSplitInline("*itálico", " texto**"))
+        assertEquals(Triple("**ok** *ab*", "*cd*", 1), smartSplitInline("**ok** *ab", "cd*"))
+        assertEquals(Triple("*ok* **ab**", "**cd**", 2), smartSplitInline("*ok* **ab", "cd**"))
+    }
+
+    @Test
+    fun `smartSplitInline retorna null sem fechamento, contagem par ou ponta vazia`() {
+        assertNull(smartSplitInline("**sem fechar", ""))
+        assertNull(smartSplitInline("**fechado** ", "depois"))
+        assertNull(smartSplitInline("**", "texto**"))
+        assertNull(smartSplitInline("**texto", "**"))
+        assertNull(smartSplitInline("*", "texto*"))
+        assertNull(smartSplitInline("*texto", "*"))
+        assertNull(smartSplitInline("`", "code`"))
+        assertNull(smartSplitInline("texto", "comum"))
+    }
+
+    @Test
+    fun `isFrontMatterTrigger só dispara com --- no fim do bloco zero`() {
+        assertTrue(isFrontMatterTrigger(0, "---", 3))
+        assertFalse(isFrontMatterTrigger(1, "---", 3))
+        assertFalse(isFrontMatterTrigger(0, "---", 2))
+        assertFalse(isFrontMatterTrigger(0, "---", 0))
+        assertFalse(isFrontMatterTrigger(0, "--", 2))
+        assertFalse(isFrontMatterTrigger(0, "----", 4))
+        assertFalse(isFrontMatterTrigger(0, "--- ", 4))
     }
 }

@@ -22,9 +22,9 @@ class UndoStack(private val coalesceWindowMs: Long = 500) {
     // era gravado. null lateja a checagem sem fazer a subtração.
     private var lastCheckpointAt: Long? = null
 
-    fun recordBeforeChange(frame: UndoFrame) {
+    fun recordBeforeChange(frame: UndoFrame, force: Boolean = false) {
         val last = lastCheckpointAt
-        if (last == null || frame.timestamp - last > coalesceWindowMs) {
+        if (force || last == null || frame.timestamp - last > coalesceWindowMs) {
             past.addLast(frame)
             future.clear()
         }

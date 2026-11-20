@@ -67,3 +67,77 @@ fun smartEnter(text: String, cursor: Int): SmartEnter? {
         cursor + insertion.length,
     )
 }
+
+private val INLINE_SPLIT_DELIMS = listOf("**", "~~", "==", "*", "`")
+
+/**
+ * Divide um span inline aberto ao pressionar Enter no meio dele (`**a|b**` ->
+ * `**a**` e `**b**`), devolvendo o texto superior fechado, o inferior
+ * reaberto e o cursor logo após a reabertura. Devolve `null` se não houver
+ * delimitador aberto com fechamento correspondente ou se alguma ponta fecharia
+ * vazia.
+ */
+fun smartSplitInline(before: String, after: String): Triple<String, String, Int>? {
+    val beforeLine = before.substringAfterLast('\n')
+    val afterLine = after.substringBefore('\n')
+    for (delim in INLINE_SPLIT_DELIMS) {
+        if (countInlineDelim(beforeLine, delim) % 2 == 1 &&
+            countInlineDelim(afterLine, delim) > 0 &&
+            !endsWithInlineDelim(beforeLine, delim) &&
+            !startsWithInlineDelim(afterLine, delim)
+        ) {
+            return Triple(before + delim, delim + after, delim.length)
+        }
+    }
+    return null
+}
+
+/** Gatilho de YAML front matter: `---` digitado sozinho no primeiro bloco. */
+fun isFrontMatterTrigger(blockIndex: Int, text: String, cursor: Int): Boolean =
+    blockIndex == 0 && text == "---" && cursor == 3
+
+private fun countInlineDelim(line: String, delim: String): Int {
+    var count = 0
+    var i = 0
+    if (delim == "*") {
+        while (i < line.length) {
+            if (line[i] == '*') {
+                var end = i + 1
+                while (end < line.length && line[end] == '*') end++
+                // Runs pares pertencem a "**"; só sobra "*" isolado em runs ímpares.
+                if ((end - i) % 2 == 1) count++
+                i = end
+            } else {
+                i++
+            }
+        }
+        return count
+    }
+    while (i <= line.length - delim.length) {
+        if (line.startsWith(delim, i)) {
+            count++
+            i += delim.length
+        } else {
+            i++
+        }
+    }
+    return count
+}
+
+private fun endsWithInlineDelim(line: String, delim: String): Boolean {
+    if (delim != "*") return line.endsWith(delim)
+    var stars = 0
+    var i = line.length - 1
+    while (i >= 0 && line[i] == '*') {
+        stars++
+        i--
+    }
+    return stars % 2 == 1
+}
+
+private fun startsWithInlineDelim(line: String, delim: String): Boolean {
+    if (delim != "*") return line.startsWith(delim)
+    var stars = 0
+    while (stars < line.length && line[stars] == '*') stars++
+    return stars % 2 == 1
+}

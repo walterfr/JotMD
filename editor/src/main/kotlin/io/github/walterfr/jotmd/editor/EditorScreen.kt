@@ -31,7 +31,11 @@ fun EditorScreen(
             state = listState,
             contentPadding = MdTokens.documentPadding,
         ) {
-            itemsIndexed(state.doc.blocks, key = { _, block -> block.id.v }) { index, block ->
+            itemsIndexed(
+                state.doc.blocks,
+                key = { _, block -> block.id.v },
+                contentType = { _, block -> block.type },
+            ) { index, block ->
                 BlockEditor(
                     block = block,
                     state = state,

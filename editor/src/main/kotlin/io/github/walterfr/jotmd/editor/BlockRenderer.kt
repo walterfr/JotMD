@@ -24,6 +24,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -67,22 +68,23 @@ fun BlockRenderer(
 
 }
 
-internal val bodyStyle =TextStyle(
-    color = MdTokens.text,
-    fontSize = MdTokens.base,
-    lineHeight = MdTokens.bodyLineHeight,
-)
+internal val bodyStyle: TextStyle
+    get() = TextStyle(
+        color = MdTokens.text,
+        fontSize = MdTokens.base,
+        lineHeight = MdTokens.bodyLineHeight,
+    )
 
 @Composable
 private fun ParagraphBlock(source: String, modifier: Modifier = Modifier) {
-    val text = remember(source) { inlineText(source) }
+    val text = remember(source, MdTokens.isDark) { inlineText(source) }
     BasicText(text, modifier.fillMaxWidth(), style = bodyStyle)
 }
 
 @Composable
 private fun HeadingBlock(source: String, modifier: Modifier = Modifier) {
     val level = remember(source) { headingLevel(source) }
-    val text = remember(source) { inlineText(source) }
+    val text = remember(source, MdTokens.isDark) { inlineText(source) }
     val scale = MdTokens.headingScale[level - 1]
 
     Column(modifier.fillMaxWidth()) {
@@ -92,7 +94,7 @@ private fun HeadingBlock(source: String, modifier: Modifier = Modifier) {
                 fontSize = MdTokens.base * scale,
                 lineHeight = MdTokens.base * scale * MdTokens.headingLineHeight[level - 1],
                 fontWeight = FontWeight.Bold,
-                color = if (level == 6) MdTokens.muted else MdTokens.text,
+                color = if (level == 6) MdTokens.muted else MdTokens.headingText,
             ),
         )
         if (MdTokens.hasRule(level)) {
@@ -102,9 +104,18 @@ private fun HeadingBlock(source: String, modifier: Modifier = Modifier) {
     }
 }
 
+private fun alertColor(type: QuoteAlertType): Color = when (type) {
+    QuoteAlertType.NOTE -> MdTokens.palette.alertNote
+    QuoteAlertType.TIP -> MdTokens.palette.alertTip
+    QuoteAlertType.IMPORTANT -> MdTokens.palette.alertImportant
+    QuoteAlertType.WARNING -> MdTokens.palette.alertWarning
+    QuoteAlertType.CAUTION -> MdTokens.palette.alertCaution
+}
+
 @Composable
 private fun QuoteBlock(source: String, modifier: Modifier = Modifier) {
-    val text = remember(source) { inlineText(source) }
+    val alert = remember(source) { quoteAlertOf(source) }
+    val barColor = if (alert != null) alertColor(alert.type) else MdTokens.quoteBar
     // IntrinsicSize.Min faz a Row medir a altura do texto primeiro, e só então a
     // barra pode acompanhá-la com fillMaxHeight.
     Row(modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
@@ -112,20 +123,38 @@ private fun QuoteBlock(source: String, modifier: Modifier = Modifier) {
             Modifier
                 .width(MdTokens.quoteBarWidth)
                 .fillMaxHeight()
-                .background(MdTokens.quoteBar),
+                .background(barColor),
         )
-        BasicText(
-            text,
-            Modifier.padding(horizontal = MdTokens.quotePadding),
-            style = bodyStyle.copy(color = MdTokens.muted),
-        )
+        if (alert != null) {
+            val accent = alertColor(alert.type)
+            Column(Modifier.padding(horizontal = MdTokens.quotePadding)) {
+                BasicText(
+                    AnnotatedString(alert.type.label),
+                    style = bodyStyle.copy(color = accent, fontWeight = FontWeight.Bold),
+                )
+                if (alert.bodySource.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    val body = remember(alert.bodySource, MdTokens.isDark) {
+                        inlineText(alert.bodySource)
+                    }
+                    BasicText(body, style = bodyStyle)
+                }
+            }
+        } else {
+            val text = remember(source, MdTokens.isDark) { inlineText(source) }
+            BasicText(
+                text,
+                Modifier.padding(horizontal = MdTokens.quotePadding),
+                style = bodyStyle.copy(color = MdTokens.muted),
+            )
+        }
     }
 }
 
 @Composable
 private fun ListBlock(source: String, modifier: Modifier = Modifier, onToggleTask: (Int) -> Unit = {}) {
     val currentToggle = rememberUpdatedState(onToggleTask)
-    val rows = remember(source) { listRows(source) }
+    val rows = remember(source, MdTokens.isDark) { listRows(source) }
     Column(modifier.fillMaxWidth()) {
         for ((index, row) in rows.withIndex()) {
             if (index > 0) Spacer(Modifier.height(4.dp))
@@ -185,8 +214,9 @@ private fun TableBlock(source: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun TableCell(text: String, align: TextAlign, header: Boolean = false) {
+    val rendered = remember(text, MdTokens.isDark) { inlineText(text) }
     BasicText(
-        inlineText(text),
+        rendered,
         Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
         style = bodyStyle.copy(
             fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,

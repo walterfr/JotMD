@@ -32,7 +32,8 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
  * desconhecida aparece como o texto cru dela; nunca some.
  */
 fun inlineText(source: String): AnnotatedString {
-    val built = buildAnnotatedString { appendChildren(astOf(source), Ctx.of(source), emptySet()) }
+    val ast = astOf(source)
+    val built = buildAnnotatedString { appendChildren(ast, Ctx.of(source, ast), emptySet()) }
     // O `======` do setext e afins são descartados depois da quebra de linha que
     // os precede, então sobra um "\n" pendurado no fim.
     val end = built.text.indexOfLast { it != '\n' } + 1
@@ -65,11 +66,27 @@ private val ALWAYS_DROP: Set<IElementType> = setOf(
 const val WIKI_URI = "jotmd:wiki:"
 const val TAG_URI = "jotmd:tag:"
 
-/** Trecho do fonte que sai trocado: [display] no lugar de [range], com [link]. */
-internal class Special(val range: IntRange, val display: String, val link: LinkAnnotation)
+/** Trecho do fonte que sai trocado: [display] no lugar de [range], com [link] ou [style]. */
+internal class Special(
+    val range: IntRange,
+    val display: String,
+    val link: LinkAnnotation? = null,
+    val style: SpanStyle? = null,
+)
+
+private val HIGHLIGHT_REGEX = Regex("""==(?=\S)([^=\r\n]*?\S)==""")
+
+private val SKIP_TYPES: Set<IElementType> = setOf(
+    MarkdownElementTypes.CODE_SPAN,
+    MarkdownElementTypes.CODE_FENCE,
+    MarkdownElementTypes.CODE_BLOCK,
+    MarkdownElementTypes.LINK_DESTINATION,
+    MarkdownElementTypes.AUTOLINK,
+    GFMTokenTypes.GFM_AUTOLINK,
+)
 
 /**
- * Fonte + trechos especiais (wikilinks e tags) com offsets nesse mesmo fonte.
+ * Fonte + trechos especiais (wikilinks, tags e marca-texto) com offsets nesse mesmo fonte.
  *
  * Os especiais são resolvidos por posição no texto, não por nó do AST: o
  * parser fragmenta `[[nota]]` em `[`, um link de referência `[nota]` e `]`, e
@@ -78,21 +95,42 @@ internal class Special(val range: IntRange, val display: String, val link: LinkA
  */
 internal class Ctx private constructor(val src: String, val specials: List<Special>) {
     companion object {
-        fun of(src: String): Ctx {
+        fun of(src: String, ast: ASTNode = astOf(src)): Ctx {
             val wikis = wikilinksIn(src).map { w ->
                 // A regex do wikilink proíbe `]` dentro: o primeiro `]]` fecha.
                 val last = src.indexOf("]]", w.offset) + 1
                 val display = w.alias ?: (w.target + (w.anchor?.let { "#$it" } ?: ""))
-                Special(w.offset..last, display, internalLink(WIKI_URI + w.target))
+                Special(w.offset..last, display, link = internalLink(WIKI_URI + w.target))
             }
             val tags = tagSpansIn(src).map { (range, name) ->
-                Special(range, src.substring(range), internalLink(TAG_URI + name))
+                Special(range, src.substring(range), link = internalLink(TAG_URI + name))
             }
+            val skipRanges = ArrayList<IntRange>()
+            collectSkipRanges(ast, skipRanges)
+            val highlightStyle = SpanStyle(
+                background = MdTokens.highlightBackground,
+                color = MdTokens.highlightText,
+            )
+            val highlights = HIGHLIGHT_REGEX.findAll(src).mapNotNull { m ->
+                if (skipRanges.any { r -> m.range.first <= r.last && r.first <= m.range.last }) {
+                    null
+                } else {
+                    Special(m.range, m.groupValues[1], style = highlightStyle)
+                }
+            }.toList()
             // `[[#topo]]` também casa como tag; o que começa antes vence.
-            val sorted = (wikis + tags).sortedBy { it.range.first }
+            val sorted = (wikis + tags + highlights).sortedBy { it.range.first }
             val kept = ArrayList<Special>()
             for (s in sorted) if (kept.isEmpty() || s.range.first > kept.last().range.last) kept += s
             return Ctx(src, kept)
+        }
+
+        private fun collectSkipRanges(node: ASTNode, out: MutableList<IntRange>) {
+            if (node.type in SKIP_TYPES) {
+                if (node.endOffset > node.startOffset) out += node.startOffset until node.endOffset
+                return
+            }
+            node.children.forEach { collectSkipRanges(it, out) }
         }
 
         private fun internalLink(uri: String) =
@@ -210,15 +248,21 @@ private fun AnnotatedString.Builder.appendLeaf(node: ASTNode, ctx: Ctx) =
 
 /**
  * Emite `src[start, end)`, trocando cada trecho especial pelo texto de
- * exibição com link. O especial sai uma vez só, no pedaço onde ele COMEÇA; os
- * pedaços seguintes que caem dentro dele não emitem nada.
+ * exibição com link ou estilo. O especial sai uma vez só, no pedaço onde ele
+ * COMEÇA; os pedaços seguintes que caem dentro dele não emitem nada.
  */
 private fun AnnotatedString.Builder.appendSource(start: Int, end: Int, ctx: Ctx) {
     var i = start
     for (sp in ctx.specials) {
         if (sp.range.last < i || sp.range.first >= end) continue
         if (sp.range.first > i) append(ctx.src.substring(i, sp.range.first))
-        if (sp.range.first >= start) withLink(sp.link) { append(sp.display) }
+        if (sp.range.first >= start) {
+            when {
+                sp.link != null -> withLink(sp.link) { append(sp.display) }
+                sp.style != null -> withStyle(sp.style) { append(sp.display) }
+                else -> append(sp.display)
+            }
+        }
         i = minOf(end, sp.range.last + 1)
     }
     if (i < end) append(ctx.src.substring(i, end))

@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -22,9 +23,9 @@ import androidx.compose.ui.unit.dp
 /**
  * Envolve a seleção do bloco focado. Só aparece com algo focado.
  *
- * ponytail: só os quatro wraps mecanicamente idênticos (negrito, itálico,
- * riscado, código) mais undo/redo. Heading/link/citação/cerca mexem com a
- * linha inteira ou abrem diálogo — ficam pra quando houver UI de diálogo.
+ * ponytail: só os cinco wraps mecanicamente idênticos (negrito, itálico,
+ * riscado, destaque, código) mais undo/redo. Heading/link/citação/cerca mexem
+ * com a linha inteira ou abrem diálogo — ficam pra quando houver UI de diálogo.
  * Undo/redo aqui só aparece com bloco focado (o atalho Ctrl+Z funciona
  * independente disso) — subir pro cabeçalho sempre-visível é mudança pequena,
  * cortada por escopo, não por estar bloqueada em nada.
@@ -42,6 +43,10 @@ fun EditorToolbar(state: EditorState, modifier: Modifier = Modifier) {
         ToolbarButton("B", TextStyle(fontWeight = FontWeight.Bold)) { state.wrapSelection("**") }
         ToolbarButton("I", TextStyle(fontStyle = FontStyle.Italic)) { state.wrapSelection("*") }
         ToolbarButton("S", TextStyle(textDecoration = TextDecoration.LineThrough)) { state.wrapSelection("~~") }
+        ToolbarButton(
+            "==",
+            TextStyle(background = MdTokens.highlightBackground, color = MdTokens.highlightText),
+        ) { state.wrapSelection("==") }
         ToolbarButton("<>", TextStyle(fontFamily = FontFamily.Monospace)) { state.wrapSelection("`") }
         ToolbarButton("↶", TextStyle()) { state.undo() }
         ToolbarButton("↷", TextStyle()) { state.redo() }
@@ -66,9 +71,10 @@ fun EditorToolbar(state: EditorState, modifier: Modifier = Modifier) {
 @Composable
 private fun ToolbarButton(label: String, emphasis: TextStyle, onClick: () -> Unit) {
     val currentOnClick = rememberUpdatedState(onClick)
+    val color = if (emphasis.color == Color.Unspecified) MdTokens.text else emphasis.color
     BasicText(
         text = AnnotatedString(label),
         modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick.value() }) },
-        style = emphasis.copy(color = MdTokens.text, fontSize = MdTokens.base),
+        style = emphasis.copy(color = color, fontSize = MdTokens.base),
     )
 }

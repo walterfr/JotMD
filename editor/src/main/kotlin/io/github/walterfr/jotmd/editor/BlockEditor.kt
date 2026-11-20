@@ -2,6 +2,7 @@ package io.github.walterfr.jotmd.editor
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +57,12 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
             textStyle = sourceStyle,
             cursorBrush = SolidColor(MdTokens.link),
         )
+    } else if (state.isSourceMode) {
+        BasicText(
+            text = block.source,
+            modifier = modifier.fillMaxWidth().clickable { state.focus(block) },
+            style = sourceStyle,
+        )
     } else {
         BlockRenderer(
             block = block,
@@ -66,11 +73,8 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
 }
 
 /**
- * Enter, Backspace no início, `↑`/`↓` nas bordas, Ctrl+Z/Ctrl+Shift+Z.
- *
- * Enter em lista/citação continua o marcador ([EditorState.smartEnterAtCursor]);
- * em PARAGRAPH/HEADING divide o bloco; nos outros tipos (cerca de código,
- * tabela) vira newline literal.
+ * Enter, Backspace no início, Delete no fim, `Tab`/`Shift+Tab`, `↑`/`↓` nas
+ * bordas e atalhos `Ctrl+*` (`B`, `I`, `U`, `K`, `Z`, `Y`, `Shift+Z`, `/`).
  */
 private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
@@ -82,20 +86,46 @@ private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolea
             state.redo()
             true
         }
+        event.isCtrlPressed && event.key == Key.Y -> {
+            state.redo()
+            true
+        }
         event.isCtrlPressed && event.key == Key.Z -> {
             state.undo()
             true
         }
+        event.isCtrlPressed && event.key == Key.B -> {
+            state.wrapSelection("**")
+            true
+        }
+        event.isCtrlPressed && event.key == Key.I -> {
+            state.wrapSelection("*")
+            true
+        }
+        event.isCtrlPressed && event.key == Key.U -> {
+            state.wrapSelection("<u>", "</u>")
+            true
+        }
+        event.isCtrlPressed && event.key == Key.K -> {
+            state.wrapSelection("[", "]()")
+            true
+        }
+        event.isCtrlPressed && event.key == Key.Slash -> {
+            state.toggleSourceMode()
+            true
+        }
+        event.key == Key.Tab -> state.tabAtCursor(shift = event.isShiftPressed)
+        event.key == Key.Enter && block.type == BlockType.FRONT_MATTER && cursor.collapsed ->
+            state.exitFrontMatterOnEnter()
         event.key == Key.Enter && cursor.collapsed && hasLineMarkers(block.type) &&
             state.smartEnterAtCursor() -> true
         event.key == Key.Enter && cursor.collapsed && isSplittable(block.type) -> {
             state.splitAtCursor()
             true
         }
-        event.key == Key.Backspace && cursor.collapsed && cursor.start == 0 -> {
-            state.mergeWithPreviousBlock(block.id)
-            true
-        }
+        event.key == Key.Backspace && cursor.collapsed && state.backspaceAtCursor() -> true
+        event.key == Key.Delete && cursor.collapsed && cursor.start == text.length &&
+            state.deleteAtCursor() -> true
         event.key == Key.DirectionUp && cursor.collapsed && cursor.start == 0 -> {
             state.focusPrevious(block.id)
             true
@@ -114,9 +144,10 @@ private fun isSplittable(type: BlockType) = type == BlockType.PARAGRAPH || type 
 private fun hasLineMarkers(type: BlockType) =
     type == BlockType.UNORDERED_LIST || type == BlockType.ORDERED_LIST || type == BlockType.BLOCKQUOTE
 
-private val sourceStyle = TextStyle(
-    color = MdTokens.text,
-    fontSize = MdTokens.base,
-    lineHeight = MdTokens.bodyLineHeight,
-    fontFamily = FontFamily.Monospace,
-)
+private val sourceStyle: TextStyle
+    get() = TextStyle(
+        color = MdTokens.text,
+        fontSize = MdTokens.base,
+        lineHeight = MdTokens.bodyLineHeight,
+        fontFamily = FontFamily.Monospace,
+    )

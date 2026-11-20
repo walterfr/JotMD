@@ -5,6 +5,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class InlineTextTest {
@@ -186,5 +187,89 @@ class InlineTextTest {
             listOf(ImageRef("gato", "images/gato.png")),
             imageRefs("antes ![gato](images/gato.png) depois"),
         )
+    }
+
+    @Test
+    fun `marca-texto aplica destaque e remove delimitadores`() {
+        val s = inlineText("antes ==marcação== depois")
+        assertEquals("antes marcação depois", s.text)
+        val span = s.spanStyles.single {
+            it.item.background == MdTokens.highlightBackground && it.item.color == MdTokens.highlightText
+        }
+        assertEquals(6, span.start)
+        assertEquals(14, span.end)
+
+        val boldHighlight = inlineText("**==forte==**")
+        assertEquals("forte", boldHighlight.text)
+        assertTrue(boldHighlight.spanStyles.any { it.item.fontWeight == FontWeight.Bold })
+        assertTrue(boldHighlight.spanStyles.any { it.item.background == MdTokens.highlightBackground })
+    }
+
+    @Test
+    fun `igualdade e código inline com == ficam literais`() {
+        val expr = inlineText("a == b && c == d")
+        assertEquals("a == b && c == d", expr.text)
+        assertTrue(expr.spanStyles.none { it.item.background == MdTokens.highlightBackground })
+
+        val code = inlineText("`==código==`")
+        assertEquals("==código==", code.text)
+        assertTrue(code.spanStyles.none { it.item.background == MdTokens.highlightBackground })
+
+        val acrossCode = inlineText("`==a` e `b==`")
+        assertEquals("==a e b==", acrossCode.text)
+        assertTrue(acrossCode.spanStyles.none { it.item.background == MdTokens.highlightBackground })
+    }
+
+    @Test
+    fun `quoteAlertOf reconhece alertas do GitHub e preserva corpo`() {
+        assertEquals(QuoteAlert(QuoteAlertType.NOTE, ""), quoteAlertOf("> [!NOTE]"))
+        assertEquals(
+            QuoteAlert(QuoteAlertType.WARNING, "linha um\nlinha dois"),
+            quoteAlertOf("> [!WARNING]\n> linha um\n> linha dois"),
+        )
+        assertEquals(
+            QuoteAlert(QuoteAlertType.CAUTION, "perigo"),
+            quoteAlertOf("> [!caution] perigo"),
+        )
+        assertEquals(
+            QuoteAlert(QuoteAlertType.TIP, "dica útil"),
+            quoteAlertOf("> [!Tip]\n>\n> dica útil"),
+        )
+        assertEquals(
+            QuoteAlert(QuoteAlertType.IMPORTANT, "algo\n\noutro parágrafo"),
+            quoteAlertOf("> [!IMPORTANT]\n> algo\n>\n> outro parágrafo"),
+        )
+        assertNull(quoteAlertOf("> citação normal"))
+        assertNull(quoteAlertOf("> texto antes [!NOTE]"))
+        assertNull(quoteAlertOf("> [!DESCONHECIDO]\n> corpo"))
+    }
+
+    @Test
+    fun `alternar MdTokens isDark atualiza cores da paleta e inlineCode`() {
+        try {
+            MdTokens.isDark = false
+            assertEquals(LightMdPalette, MdTokens.palette)
+            assertEquals(LightMdPalette.background, MdTokens.background)
+            assertEquals(LightMdPalette.text, MdTokens.text)
+            assertEquals(LightMdPalette.highlightBackground, MdTokens.highlightBackground)
+            assertEquals(LightMdPalette.inlineCodeBackground, MdTokens.inlineCode.background)
+
+            MdTokens.isDark = true
+            assertEquals(DarkMdPalette, MdTokens.palette)
+            assertEquals(DarkMdPalette.background, MdTokens.background)
+            assertEquals(DarkMdPalette.text, MdTokens.text)
+            assertEquals(DarkMdPalette.highlightBackground, MdTokens.highlightBackground)
+            assertEquals(DarkMdPalette.inlineCodeBackground, MdTokens.inlineCode.background)
+
+            val darkHighlight = inlineText("==escuro==")
+            assertTrue(
+                darkHighlight.spanStyles.any {
+                    it.item.background == DarkMdPalette.highlightBackground &&
+                        it.item.color == DarkMdPalette.highlightText
+                },
+            )
+        } finally {
+            MdTokens.isDark = false
+        }
     }
 }

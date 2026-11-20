@@ -26,7 +26,8 @@ data class ListRow(
 
 fun listRows(source: String): List<ListRow> {
     val out = mutableListOf<ListRow>()
-    collectRows(astOf(source), Ctx.of(source), depth = 0, out = out)
+    val ast = astOf(source)
+    collectRows(ast, Ctx.of(source, ast), depth = 0, out = out)
     return out
 }
 
@@ -171,3 +172,40 @@ fun imageRefs(source: String): List<ImageRef> =
  */
 fun soleImage(source: String): ImageRef? =
     IMAGE_REGEX.matchEntire(source.trim())?.let { ImageRef(it.groupValues[1], it.groupValues[2]) }
+
+/** Tipos de GitHub Alert suportados em citações (`> [!NOTE]`, etc.). */
+enum class QuoteAlertType(val label: String) {
+    NOTE("Note"),
+    TIP("Tip"),
+    IMPORTANT("Important"),
+    WARNING("Warning"),
+    CAUTION("Caution"),
+}
+
+data class QuoteAlert(val type: QuoteAlertType, val bodySource: String)
+
+private val ALERT_HEADER_REGEX = Regex(
+    """^\s*>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)]\s*(.*)$""",
+    RegexOption.IGNORE_CASE,
+)
+private val QUOTE_LINE_PREFIX_REGEX = Regex("""^\s*>\s?""")
+
+/**
+ * Extrai alerta do GitHub da 1ª linha de uma citação, ou null para citação normal.
+ */
+fun quoteAlertOf(source: String): QuoteAlert? {
+    val lines = source.lines()
+    val first = lines.firstOrNull() ?: return null
+    val match = ALERT_HEADER_REGEX.matchEntire(first) ?: return null
+    val type = QuoteAlertType.valueOf(match.groupValues[1].uppercase())
+    val firstRest = match.groupValues[2].trim()
+    val bodyLines = buildList {
+        if (firstRest.isNotBlank()) add(firstRest)
+        for (line in lines.drop(1)) {
+            add(QUOTE_LINE_PREFIX_REGEX.replaceFirst(line, ""))
+        }
+    }
+        .dropWhile { it.isBlank() }
+        .dropLastWhile { it.isBlank() }
+    return QuoteAlert(type, bodyLines.joinToString("\n"))
+}
