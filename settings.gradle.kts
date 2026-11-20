@@ -18,3 +18,4 @@ rootProject.name = "JotMD"
 include(":core-md")
 include(":editor")
 include(":app")
+include(":desktop")

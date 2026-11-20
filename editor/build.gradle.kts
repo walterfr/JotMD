@@ -14,6 +14,8 @@ android {
 
     buildFeatures { compose = true }
 
+    sourceSets["main"].kotlin.srcDir("src/androidMain/kotlin")
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
