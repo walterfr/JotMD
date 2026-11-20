@@ -60,6 +60,7 @@ fun BlockEditor(block: Block, state: EditorState, modifier: Modifier = Modifier)
         BlockRenderer(
             block = block,
             modifier = modifier.fillMaxWidth().clickable { state.focus(block) },
+            onToggleTask = { state.toggleTask(block.id, it) },
         )
     }
 }

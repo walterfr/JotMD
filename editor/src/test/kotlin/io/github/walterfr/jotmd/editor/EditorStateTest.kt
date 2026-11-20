@@ -269,4 +269,22 @@ class EditorStateTest {
         assertEquals(1, s.doc.blocks.size)
         assertEquals("um dois tres", s.doc.blocks[0].source)
     }
+
+    @Test
+    fun `toggleTask muda só o source do bloco, mantém trailing e vira um undo`() {
+        val s = EditorState("- [ ] a\n- [x] b\n\nfim\n")
+        s.toggleTask(s.doc.blocks[0].id, 0)
+        assertEquals("- [x] a\n- [x] b", s.doc.blocks[0].source)
+        assertEquals("\n\n", s.doc.blocks[0].trailing)
+        assertEquals("- [x] a\n- [x] b\n\nfim\n", s.text())
+        s.undo()
+        assertEquals("- [ ] a\n- [x] b\n\nfim\n", s.text())
+    }
+
+    @Test
+    fun `toggleTask em item sem checkbox não muda nada nem grava undo`() {
+        val s = EditorState("- a\n- [ ] b\n")
+        s.toggleTask(s.doc.blocks[0].id, 0)
+        assertEquals("- a\n- [ ] b\n", s.text())
+    }
 }

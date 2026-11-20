@@ -17,6 +17,7 @@ import io.github.walterfr.jotmd.editor.ops.UndoStack
 import io.github.walterfr.jotmd.editor.ops.mergeWithPrevious
 import io.github.walterfr.jotmd.editor.ops.reparse
 import io.github.walterfr.jotmd.editor.ops.splitAt
+import io.github.walterfr.jotmd.editor.ops.toggleTask
 
 /**
  * Estado de edição por bloco. F3: Enter divide o bloco (`splitAt`), Backspace
@@ -137,6 +138,15 @@ class EditorState(initialText: String = "") {
         val result = reparse(merged, index - 1, ids)
         doc = doc.copy(blocks = result)
         focusAtOffset(result, index - 1, mergeOffset)
+    }
+
+    /** Toque no checkbox do item [itemIndex] de uma lista: só o `source` do bloco muda; `trailing` fica. */
+    fun toggleTask(blockId: BlockId, itemIndex: Int) {
+        val block = doc.blocks.find { it.id == blockId } ?: return
+        val toggled = toggleTask(block.source, itemIndex)
+        if (toggled == block.source) return
+        recordUndoCheckpoint()
+        doc = doc.copy(blocks = doc.blocks.map { if (it.id == blockId) it.copy(source = toggled) else it })
     }
 
     /** `↑` na borda de cima: pula pro bloco anterior, cursor no fim. No-op no primeiro bloco. */
