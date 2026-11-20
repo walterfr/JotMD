@@ -61,10 +61,10 @@ minSdk 26, Compose BOM 2025.06.01, `org.jetbrains:markdown` 0.7.3. Versões em
 
 | Módulo | Conteúdo |
 |---|---|
-| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocSearch` (`findInDocument`, `replaceAllInText`), `HtmlExport` (`exportToHtml`). |
+| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocSearch` (`findInDocument`, `replaceAllInText`), `HtmlExport` (`exportToHtml`), `PdfExport` (`exportToPdf`). |
 | `:editor` | Compose. `EditorState` (estado e operações), `BlockEditor` (foco + teclas), `BlockRenderer`/`BlockParts`/`InlineText` (renderização, GitHub Alerts e `==highlight==`), `Toolbar`, `ImagePreview`, `MdTheme` (tema claro/escuro via `MdTokens.isDark` / `MdPalette`), modo código-fonte (`isSourceMode`). Operações puras em `editor/ops/`: `BlockOps` (`splitAt`, `mergeWithPrevious`, `reparse`), `UndoStack`, `TaskOps`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`. |
-| `:app` | Shell Android. `MainActivity` (gaveta, multi-abas, tema escuro, busca na pasta e na nota, export HTML via SAF, links), `TabManager`, `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
-| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, árvore `.md`, busca full-text na pasta e na nota, tema escuro, export HTML, wikilinks/tags, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
+| `:app` | Shell Android. `MainActivity` (gaveta, multi-abas, tema escuro, busca na pasta e na nota, export HTML/PDF via SAF, links), `TabManager`, `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
+| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, árvore `.md`, busca full-text na pasta e na nota, tema escuro, export HTML/PDF, wikilinks/tags, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
 
 ## Estado (2026-11-20)
 
@@ -85,34 +85,42 @@ Tag `v0.1.0` publicada. Feito e verificado em tablet:
 - Enter inteligente (`ops/SmartEnter.kt`): continua lista, numerada, tarefa
   e citação; item vazio sai da estrutura. Igual ao que o Typora grava.
 
-Implementado em código neste ciclo (verificação visual e funcional em tablet
-Android via `adb` ainda pendente):
+Implementado em código e testado em JVM neste ciclo:
 
-- YAML front matter: `BlockType.FRONT_MATTER`, um bloco só no topo,
-  renderizado como o `pre.md-meta-block` do Typora (YAML sem os `---`,
-  monoespaçado, cinza, fundo `#f7f7f7`). Inline no documento, não em painel
-  lateral como o `AI_CONTEXT.md` sugeria: o Typora faz assim. Testes JVM
-  verdes.
-- Edição inteligente no estilo Typora (`editor/ops/`): Backspace em cascata e
-  remoção de par vazio (`SmartBackspace.kt`), `Tab`/`Shift+Tab`
-  (`SmartTab.kt`), Auto-pair/`surroundPair` (`SmartPair.kt`) e `Delete` no
-  fim/bloco vazio (`SmartDelete.kt`).
-- Multi-abas e shell desktop: `TabManager.kt` no Android (`:app`) e app
-  desktop Windows em Compose Desktop (`:desktop`) com abas, árvore `.md`,
-  busca full-text na pasta e na nota, tema escuro e export HTML.
-- Tema escuro `night` (`MdTheme.kt`: `MdTokens.isDark` / `MdPalette`), modo
-  código-fonte (`isSourceMode`), GitHub Alerts (`Alerts.kt`,
-  `BlockRenderer.kt`) e marca-texto `==highlight==`.
-- Busca e substituição local na nota (`DocSearch.kt`: `findInDocument`,
-  `replaceAllInText`) e exportação HTML (`HtmlExport.kt`: `exportToHtml`,
-  via SAF no `:app` e em disco no `:desktop`).
+- YAML front matter (`BlockType.FRONT_MATTER`), `SmartBackspace`, `SmartTab`,
+  `SmartPair`, `SmartDelete`, `TabManager` (Android `:app`), app desktop
+  Windows (`:desktop`), tema escuro `night` (`MdTheme.kt`), modo código-fonte
+  (`isSourceMode`), GitHub Alerts (`Alerts.kt`), `==highlight==`, busca e
+  substituição na nota (`DocSearch.kt`), exportação HTML (`HtmlExport.kt`),
+  exportação PDF 1.4 nativa (`PdfExport.kt` em `:core-md`, plugado via SAF
+  em `:app` e diálogo em `:desktop`), otimização de split local e `contentType`
+  em `LazyColumn` para documentos de 5k+ linhas, e metadados/receita F-Droid
+  (`dependenciesInfo` desligado em `app/build.gradle.kts`, Fastlane `pt-BR`/
+  `en-US` em `fastlane/metadata/android/`, `fdroid/io.github.walterfr.jotmd.yml`).
+
+Verificado em tablet Android (`TB361FU - 16`, Android 16 via `adb`):
+
+- Renderização e fluxo visual de `typora-ref.md`, barra multi-abas (`+`, troca,
+  fechamento), barra `Buscar`/`Subst. tudo` (`1 substituído(s)`), tema escuro/claro,
+  abertura SAF de arquivo em `/sdcard/Documents/jotmd-ws/`, `FRONT_MATTER`,
+  GitHub Alerts (`[!NOTE]`, `[!WARNING]`), `==highlight==`, tabela GFM,
+  toggle de checkbox salvo em disco e `SmartEnter` pelo Enter virtual do
+  Microsoft SwiftKey gravado em disco.
+- 3 bugs reais pegos no tablet e corrigidos com testes de regressão:
+  (1) contraste do título/status bar no tema claro/escuro (`Surface` +
+  `onBackground` + `SystemBarStyle` reativo ao `isDark` no `MainActivity.kt`,
+  re-verificado em screenshot); (2) BOM UTF-8 (`\uFEFF`) antes de `---` no
+  `MdParser.kt` + `RoundtripTest.kt` (re-verificado na tela); (3) `Backspace`/
+  `Enter` do IME virtual chegando por `InputConnection` -> `EditorState.edit()`
+  com filtro contra eco stale de `batchEdit` do SwiftKey (`EditorState.kt` +
+  `EditorStateTest.kt`; re-teste final em aparelho pausado antes de rodar
+  porque outro app tomou foco).
 
 Pendente:
 
-- Verificação visual e funcional em tablet Android via `adb` para os recursos
-  consolidados após a `v0.1.0`.
-- F6 restante: exportação PDF nativa, desempenho em 5k+ linhas e
-  empacotamento/publicação F-Droid.
+- Re-validar interativamente no tablet o ajuste final de eco stale do
+  `batchEdit` no `SmartBackspace` via SwiftKey, e testar geração de pacote
+  release/tag atualizada antes da submissão ao `fdroiddata`.
 
 ## Armadilhas já pagas (não repetir)
 
@@ -147,6 +155,15 @@ Pendente:
    edição do agente, não `python - <<EOF`.
 10. **Corpus de teste em `docs/*.md` é `-text`** no `.gitattributes`: bytes
    exatos, sem normalização de fim de linha.
+11. **IME Android (SwiftKey) faz `deleteSurroundingText` + eco de `batchEdit`:**
+    teclados virtuais disparam `Backspace` via `InputConnection -> onValueChange`
+    (`EditorState.edit`) em vez de `onPreviewKeyEvent`. Além disso, quando `edit`
+    reescreve `editValue` (como `SmartBackspace`/`SmartPair`), o `batchEdit` do
+    IME pode reenviar o texto cru anterior ~4 ms depois antes da recomposição
+    atualizar o `BasicTextField`, exigindo o filtro `isStaleImeEcho` em `EditorState.kt`.
+12. **BOM UTF-8 (`\uFEFF`) na linha 1:** arquivos criados no Windows podem começar
+    com `\uFEFF` antes de `---`; `MdParser.parse` preserva o `\uFEFF` em
+    `DocState.leading` para não quebrar `FRONT_MATTER` nem o roundtrip byte a byte.
 
 ## Regras de trabalho
 

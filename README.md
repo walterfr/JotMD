@@ -9,10 +9,9 @@ Alvo de publicação no Android: F-Droid.
 **F0–F6 em evolução.** Abre arquivos e pastas de notas (via SAF no Android ou
 diretório local no Windows) e edita blocos em Compose com motor "Escolha C",
 edição inteligente estilo Typora, multi-abas, busca na pasta e na nota, temas
-claro (`github`) e escuro (`night`) e exportação HTML. Em aberto para fechar
-F6: validação visual em tablet Android, exportação PDF nativa, desempenho em
-documentos longos (5k+ linhas) e empacotamento F-Droid. O roadmap original está
-em `AI_CONTEXT.md` e o estado detalhado em `AGENTS.md`.
+claro (`github`) e escuro (`night`), exportação HTML/PDF nativa e metadados
+prontos para F-Droid (ver detalhes em `AGENTS.md`). O roadmap original está
+em `AI_CONTEXT.md`.
 
 ## Funcionalidades
 
@@ -31,17 +30,18 @@ em `AI_CONTEXT.md` e o estado detalhado em `AGENTS.md`.
   pasta no desktop), além de busca e substituição local na nota (`DocSearch`).
 - **Temas e blocos estendidos:** tema claro `github` e tema escuro `night`,
   GitHub Alerts (`> [!NOTE]` etc.) e marca-texto `==highlight==`.
-- **Exportação:** geração de HTML standalone (`HtmlExport`), gravado via SAF
-  no Android e em disco no desktop.
+- **Exportação:** geração de HTML standalone (`HtmlExport`) e PDF 1.4 A4
+  nativo sem dependências externas (`PdfExport`), gravados via SAF no Android e
+  em disco no desktop.
 
 ## Módulos
 
 | Módulo | O quê | Fase |
 |---|---|---|
-| `:core-md` | Parsing, serialização, `FrontMatter`, `Wikilinks`, `Tags`, `DocIndex`, `Alerts`, `DocSearch` e `HtmlExport`. Kotlin puro, zero Android, testável em JVM. | F0, F5–F6 ✅ |
+| `:core-md` | Parsing, serialização, `FrontMatter`, `Wikilinks`, `Tags`, `DocIndex`, `Alerts`, `DocSearch`, `HtmlExport` e `PdfExport`. Kotlin puro, zero Android, testável em JVM. | F0, F5–F6 ✅ |
 | `:editor` | Renderização e edição de blocos em Compose (`SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`), temas claro/escuro (`github`/`night`), GitHub Alerts, `==highlight==` e `isSourceMode`. | F1–F6 ✅ |
-| `:app` | Shell Android: SAF (arquivo e pasta raiz), multi-abas (`TabManager`), autosave, busca FTS4, busca na nota, tema escuro e export HTML. | F1–F6 (validação em tablet pendente) |
-| `:desktop` | Shell Windows (Compose Desktop JVM) compartilhando `:core-md` e fontes comuns de `:editor`: abas, árvore `.md`, busca na pasta e na nota, tema escuro e export HTML. | F5–F6 ✅ |
+| `:app` | Shell Android: SAF (arquivo e pasta raiz), multi-abas (`TabManager`), autosave, busca FTS4, busca na nota, tema escuro e export HTML/PDF (empacotamento F-Droid em `fastlane/` e `fdroid/`). | F1–F6 ✅ |
+| `:desktop` | Shell Windows (Compose Desktop JVM) compartilhando `:core-md` e fontes comuns de `:editor`: abas, árvore `.md`, busca na pasta e na nota, tema escuro e export HTML/PDF. | F5–F6 ✅ |
 
 ## A invariante
 
