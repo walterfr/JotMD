@@ -6,7 +6,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -23,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -44,11 +48,15 @@ import io.github.walterfr.jotmd.core.BlockType
  * jeito que der.
  */
 @Composable
-fun BlockRenderer(block: Block, modifier: Modifier = Modifier) {
+fun BlockRenderer(
+    block: Block,
+    modifier: Modifier = Modifier,
+    onToggleTask: (itemIndex: Int) -> Unit = {},
+) {
     when (block.type) {
         BlockType.HEADING -> HeadingBlock(block.source, modifier)
         BlockType.BLOCKQUOTE -> QuoteBlock(block.source, modifier)
-        BlockType.UNORDERED_LIST, BlockType.ORDERED_LIST -> ListBlock(block.source, modifier)
+        BlockType.UNORDERED_LIST, BlockType.ORDERED_LIST -> ListBlock(block.source, modifier, onToggleTask)
         BlockType.TABLE -> TableBlock(block.source, modifier)
         BlockType.CODE_FENCE -> CodeBlock(block.source, fenced = true, modifier = modifier)
         BlockType.CODE_INDENTED -> CodeBlock(block.source, fenced = false, modifier = modifier)
@@ -122,15 +130,27 @@ private fun QuoteBlock(source: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ListBlock(source: String, modifier: Modifier = Modifier) {
+private fun ListBlock(source: String, modifier: Modifier = Modifier, onToggleTask: (Int) -> Unit = {}) {
+    val currentToggle = rememberUpdatedState(onToggleTask)
     val rows = remember(source) { listRows(source) }
     Column(modifier.fillMaxWidth()) {
         for ((index, row) in rows.withIndex()) {
             if (index > 0) Spacer(Modifier.height(4.dp))
             Row(Modifier.padding(start = MdTokens.listIndent * row.depth)) {
+                // pointerInput(Unit) + detectTapGestures, não clickable: clickable tira o foco
+                // do BasicTextField antes do toque chegar (ver ToolbarButton). Área >= 40dp.
+                val tap = if (row.checked != null) {
+                    Modifier
+                        .defaultMinSize(minWidth = 40.dp, minHeight = 40.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { currentToggle.value(index) })
+                        }
+                } else {
+                    Modifier.width(28.dp)
+                }
                 BasicText(
                     AnnotatedString(markerLabel(row)),
-                    Modifier.width(28.dp),
+                    tap,
                     style = bodyStyle,
                 )
                 BasicText(row.content, style = bodyStyle)

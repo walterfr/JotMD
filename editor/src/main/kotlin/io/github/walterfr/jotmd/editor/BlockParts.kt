@@ -20,6 +20,8 @@ data class ListRow(
     val marker: String,
     val checked: Boolean?,
     val content: AnnotatedString,
+    /** Offset do `[` do checkbox no source; `toggleTask` troca o caractere logo depois. */
+    val checkOffset: Int? = null,
 )
 
 fun listRows(source: String): List<ListRow> {
@@ -40,7 +42,8 @@ private fun collectRows(node: ASTNode, src: String, depth: Int, out: MutableList
                         ?: child.pick(MarkdownTokenTypes.LIST_NUMBER)
                     )?.getTextInNode(src)?.toString()?.trim().orEmpty()
 
-                val checked = child.pick(GFMTokenTypes.CHECK_BOX)
+                val box = child.pick(GFMTokenTypes.CHECK_BOX)
+                val checked = box
                     ?.getTextInNode(src)
                     ?.let { it.contains('x') || it.contains('X') }
 
@@ -48,6 +51,7 @@ private fun collectRows(node: ASTNode, src: String, depth: Int, out: MutableList
                     depth = depth,
                     marker = marker,
                     checked = checked,
+                    checkOffset = box?.startOffset,
                     content = buildAnnotatedString {
                         for (part in child.children) {
                             if (part.type == MarkdownElementTypes.PARAGRAPH) {
