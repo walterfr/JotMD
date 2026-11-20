@@ -40,6 +40,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -241,8 +244,14 @@ private fun EditorHostScreen() {
                                     .padding(horizontal = 16.dp, vertical = 10.dp),
                             ) {
                                 Text(hit.name, style = MaterialTheme.typography.titleSmall)
+                                val (text, marks) = snippetMarks(hit.snippet)
                                 Text(
-                                    hit.snippet,
+                                    buildAnnotatedString {
+                                        append(text)
+                                        for (m in marks) {
+                                            addStyle(SpanStyle(fontWeight = FontWeight.Bold), m.first, m.last + 1)
+                                        }
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 2,

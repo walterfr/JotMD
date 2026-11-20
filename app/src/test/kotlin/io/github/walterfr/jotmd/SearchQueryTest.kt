@@ -32,6 +32,17 @@ class SearchQueryTest {
     }
 
     @Test
+    fun `trecho achata quebras de linha e devolve onde destacar`() {
+        // Quebra de linha no corpo fazia o termo cair fora das 2 linhas
+        // exibidas — visto no tablet: só aparecia "# Plano de aula".
+        val raw = "# Plano\n\nRevisão de \u0002ação\u0003 e [link](x)"
+        val (text, marks) = snippetMarks(raw)
+        assertEquals("# Plano Revisão de ação e [link](x)", text)
+        assertEquals(listOf(19 until 23), marks)
+        assertEquals("ação", text.substring(marks.single()))
+    }
+
+    @Test
     fun `entrada sem nenhuma palavra não vira consulta`() {
         assertNull(ftsQuery(""))
         assertNull(ftsQuery("   "))
