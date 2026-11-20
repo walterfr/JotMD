@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -181,13 +182,30 @@ private fun EditorHostScreen() {
         root = uri
     }
 
-    // Relista ao trocar a raiz e a cada abertura do painel (arquivos mudam fora do app).
+    val index = remember { SearchIndex(context.applicationContext) }
+    // Sobe a cada reindexação concluída: refaz a busca, senão o resultado
+    // mostrado seria o de antes de o índice ver os arquivos novos/alterados.
+    var indexVersion by remember { mutableStateOf(0) }
+    var query by remember { mutableStateOf("") }
+    var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
+
+    // Relista ao trocar a raiz e a cada abertura do painel (arquivos mudam fora
+    // do app) e sincroniza o índice — que só relê arquivo com data alterada,
+    // então isso também pega o que o próprio autosave gravou.
     LaunchedEffect(root, drawerState.isOpen) {
         val r = root ?: return@LaunchedEffect
         if (!drawerState.isOpen && nodes.isNotEmpty()) return@LaunchedEffect
-        nodes = runCatching {
+        val listed = runCatching {
             withContext(Dispatchers.IO) { listMarkdownTree(context.contentResolver, r) }
         }.getOrDefault(emptyList())
+        nodes = listed
+        runCatching { withContext(Dispatchers.IO) { index.reindex(context.contentResolver, r, listed) } }
+        indexVersion++
+    }
+
+    LaunchedEffect(query, indexVersion) {
+        delay(200)
+        hits = runCatching { withContext(Dispatchers.IO) { index.search(query) } }.getOrDefault(emptyList())
     }
 
     ModalNavigationDrawer(
@@ -199,8 +217,47 @@ private fun EditorHostScreen() {
                 TextButton(onClick = { pickRoot.launch(null) }) {
                     Text(if (root == null) "Escolher pasta" else "Trocar pasta")
                 }
+                if (root != null) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("Buscar") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                }
                 HorizontalDivider()
-                LazyColumn {
+                if (query.isNotBlank()) {
+                    LazyColumn {
+                        items(hits, key = { it.docId }) { hit ->
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val r = root ?: return@clickable
+                                        openUri(DocumentsContract.buildDocumentUriUsingTree(r, hit.docId))
+                                        scope.launch { drawerState.close() }
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                            ) {
+                                Text(hit.name, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    hit.snippet,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
+                    if (hits.isEmpty()) {
+                        Text(
+                            "Nada encontrado",
+                            Modifier.padding(16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else LazyColumn {
                     items(nodes, key = { it.docId }) { node ->
                         Text(
                             text = if (node.isDir) node.name + "/" else node.name,

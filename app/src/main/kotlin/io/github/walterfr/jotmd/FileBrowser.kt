@@ -4,8 +4,17 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.provider.DocumentsContract
 
-/** Item da lista achatada do painel. [depth] vira indentação; [docId] é o ID SAF. */
-data class DocNode(val name: String, val docId: String, val isDir: Boolean, val depth: Int)
+/**
+ * Item da lista achatada do painel. [depth] vira indentação; [docId] é o ID SAF.
+ * [lastModified] (ms, 0 = desconhecido) decide se o índice de busca relê o arquivo.
+ */
+data class DocNode(
+    val name: String,
+    val docId: String,
+    val isDir: Boolean,
+    val depth: Int,
+    val lastModified: Long = 0,
+)
 
 /** Só `.md`/`.markdown`; sem diferenciar maiúsculas (`README.MD` é markdown). */
 fun isMarkdownName(name: String): Boolean {
@@ -37,6 +46,7 @@ fun listMarkdownTree(resolver: ContentResolver, treeUri: Uri): List<DocNode> {
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
             ),
             null, null, null,
         )?.use { c ->
@@ -46,6 +56,7 @@ fun listMarkdownTree(resolver: ContentResolver, treeUri: Uri): List<DocNode> {
                     docId = c.getString(0),
                     isDir = c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR,
                     depth = depth,
+                    lastModified = if (c.isNull(3)) 0 else c.getLong(3),
                 )
             }
         }
