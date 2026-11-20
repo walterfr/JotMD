@@ -32,11 +32,15 @@ reavaliar em F6.
 
 ## Enter em listas e citações — observado no Typora
 
-Método: caixa-preta. Digitar sequências num arquivo vazio do Typora instalado,
-salvar, ler o `.md` gravado. Nada do código do Typora é lido: ele é proprietário,
-e o executável desliga a inspeção de propósito (fuses `RunAsNode` e
-`EnableNodeCliInspectArguments` desligados, conferidos com `rea
-inspect-electron-fuses`). O JotMD reproduz o comportamento, não a implementação.
+Método: caixa-preta e inspeção com `morluto/rea`. Originalmente observado
+digitando sequências num arquivo vazio do Typora instalado, salvando e lendo
+o `.md` gravado (fuses `RunAsNode` e `EnableNodeCliInspectArguments`
+desligados no executável, conferidos com `rea inspect-electron-fuses`). O
+uso de `rea` para inspecionar os artefatos instalados em
+`C:\Program Files\Typora\resources` (CSS/temas, HTML, JS/Electron,
+`app.asar`, `appsrc/`, `page-dist/`) e APKs Android de referência está
+liberado para extrair comportamento, tokens e fluxos para reimplementação do
+zero em Kotlin/Compose no JotMD.
 
 | Situação | O Typora grava |
 |---|---|
@@ -44,13 +48,83 @@ inspect-electron-fuses`). O JotMD reproduz o comportamento, não a implementaç�
 | Enter no meio do item | o texto depois do cursor vai para o novo item |
 | Enter em item vazio | sai da lista: linha em branco e parágrafo |
 | Lista numerada | o próximo número (`1. a` / `2. b`) |
-| Tarefa | novo item sempre desmarcado (`- [ ] `), mesmo depois de `[x]` |
+| Tarefa | novo item sempre desmarcado (`- [ ] `), mesmo depois de `[x]` no fim da linha; no meio de item marcado preserva `[x]`; no início (offset 0), o item vazio acima nasce desmarcado (`[ ]`) e o texto desce mantendo o estado original |
+| Heading (início / meio / fim) | offset 0: linha acima vira `paragraph` vazio e o título desce mantendo `heading`; meio: divide em dois `heading` iguais; fim: cria `paragraph` abaixo |
 | Citação | novo parágrafo **dentro** da citação: `> a` / `>` / `> b` |
 | Citação vazia | sai, e o separador `>` vazio sai junto |
-| `**`, `` ` `` | sem fechamento automático |
+| YAML front matter (`meta_block`) | `Enter` insere `\n` interno; só sai para `paragraph` abaixo quando já há `\n\n` no fim (`/\n{2,}$/`) e `Enter` é pressionado no final sem modificadores |
+| `---` na linha 1 (`paragraph`) | `Enter` no final converte em `meta_block` no topo + `paragraph` vazio abaixo e foca o `meta_block` |
+| Célula de tabela (`table_cell`) | `Enter` vai para a célula da linha abaixo na mesma coluna; `Ctrl+Enter` (`Cmd+Enter` no Mac) adiciona nova linha abaixo; `Shift+Enter` insere `<br />` |
+| Span inline (`smartSplit`) | dividir no meio de `**negrito**`, `*itálico*`, etc. fecha os delimitadores no bloco superior e os reabre no inferior, ajustando o cursor |
+| `def_link` / `def_footnote` vazios | `Enter` no início/fim converte o bloco de volta para `paragraph` |
+| `**`, `` ` `` | sem fechamento automático ao dar `Enter` |
 
-Implementado em `editor/ops/SmartEnter.kt`. Ainda não observado: Backspace no
-início de item/heading (o teste saiu contaminado e foi descartado).
+Implementado em `editor/ops/SmartEnter.kt` (listas, listas numeradas, tarefas e citações; divisão e fusão de blocos em `editor/ops/BlockOps.kt` e `editor/EditorState.kt`).
+
+## Backspace e Delete — extraído do Typora (`Mod 61`, `Mod 5f`, `Mod 60`)
+
+Pipeline de `backspaceHandler` (`Mod 61`) quando o cursor está no offset 0 de um bloco folha (`x = [b, v, z, V, tryConvertListItemToUpperParagraph, w, y]`):
+
+1. **`b` (`table_cell`):** se estiver na 1ª célula e a tabela inteira estiver vazia (`isTableEmpty`), apaga a tabela; caso contrário, move o cursor para o fim da célula anterior (`getSibling(t, "before")`).
+2. **`v` (`hr` ou bloco vazio anterior):** se o irmão anterior for `hr` ou bloco vazio (enquanto o atual não é vazio), ou item vazio antes do item atual, apaga apenas o bloco/`hr` anterior sem mover o bloco atual.
+3. **`z` (`tasklist`):** no 1º parágrafo de um item de tarefa, o **1º Backspace** remove apenas o checkbox (`unset("style")`, `unset("checked")`), convertendo `- [ ] texto` → `- texto` (ou `- [x] texto` → `- texto`).
+4. **`V` (1º filho de `blockquote` ou 1º item de `list` no topo):** chama `Node.upStream` (`Mod 5f`), desenrolando um nível (`> texto` → `texto`; `- texto` → `texto`).
+5. **`tryConvertListItemToUpperParagraph` (2º+ `list_item` de uma lista):** o **1º Backspace** remove o marcador do item e anexa o parágrafo como filho ao final do `list_item` anterior; o **2º Backspace** funde o texto no parágrafo anterior. *(Adaptação para o modelo plano do JotMD: 1º Backspace remove o marcador de lista/heading/citação virando parágrafo/desindentando; 2º Backspace funde com o bloco anterior).*
+6. **`w` (`Node.backToParagraphBeforeDelete` = `heading`, `def_footnote`, `def_link`, `meta_block`, `fences`):** o **1º Backspace** converte o bloco em `paragraph` mantendo texto e cursor no início (`### Título` → `Título`); o **2º Backspace** funde com o bloco anterior.
+7. **`y` (fallback em `paragraph`):** concatena o texto no final do bloco folha anterior e posiciona o cursor no ponto de junção.
+
+Outros casos de remoção:
+- **Backspace entre par auto-fechado vazio (`tryRemovePairStart`, `Mod 60`):** apagar logo após `(`, `[`, `{`, `"`, `'`, `*`, `` ` ``, `~`, `_`, `$`, `^` quando o caractere seguinte é o fechamento correspondente apaga ambos os caracteres de uma vez.
+- **Delete no fim ou bloco vazio (`k`):** em `paragraph`/`heading` vazio com bloco seguinte, remove o bloco atual e move o cursor para o início do próximo; em `hr`/`toc`, `deleteSelectable` remove o bloco; em `CodeMirror` (`fences`/`math_block`) vazio, `deleteBlock` apaga o bloco inteiro.
+
+Implementado no JotMD em `editor/ops/SmartBackspace.kt` e `editor/ops/SmartDelete.kt`.
+
+## Tab / Shift+Tab (`Mod 5f`, `Mod 48`, `Mod 49`)
+
+- **Lista (`list_item`):** `Tab` (`moreIndent`) aninha o item dentro do último filho do `list_item` anterior; `Shift+Tab` (`lessIndent`) sobe um nível de lista ou desenrola para `paragraph` se já estiver na raiz.
+- **Citação (`blockquote`):** `Shift+Tab` desenrola um nível do `blockquote` (`paragraph`, `heading`, `def_link`, `def_footnote`).
+- **Tabela (`table_cell`):** `Tab` / `Shift+Tab` avança/recua para a célula seguinte/anterior selecionando o conteúdo (passa de `th` para o 1º `td` e entre linhas); `Tab` na última célula cria nova linha (`addRow`).
+- **Link/nota de rodapé (`def_link`, `def_footnote`):** `Tab` / `Shift+Tab` alterna o foco entre os campos `md-def-name`, `md-def-url`/`md-def-content` e `md-def-title`.
+- **Parágrafo / Heading / Front matter:** `Shift+Tab` remove `\t` ou até 2 espaços no início; `Tab` insere `\t` literal (ou `indentSize` espaços dentro de `meta_block` quando no início da linha).
+- **CodeMirror (`fences`, `math_block`, `html_block`, modo fonte):** delega para `indentMore` / `indentLess`.
+
+Implementado no JotMD em `editor/ops/SmartTab.kt`.
+
+## Arquitetura interna do Typora (`v1.13.7`)
+
+Extraído de `C:\Program Files\Typora\resources` via `morluto/rea`:
+
+- **`app.asar`** (`package.json` `version: "1.13.7"`, `releaseId: "cf170905"`):
+  - `launch.dist.js` (1.383 B): loader de bytecode V8 (`.jsc`) via `vm.Script` com string dummy preenchida com `U+200B` do mesmo tamanho (`source_length = 235.173`).
+  - `atom.compiled.dist.jsc` (379.912 B; `payload_length = 379.880`): processo principal Electron compilado; `rea inspect_v8_code_cache` extraiu 1.828 strings incluindo canais IPC (`export.printToPDF`, `export.genPrintView`, `export.prepareImageCapture`, `export.captureImage`, `dialog.showOpenDialog`, `dialog.showSaveDialog`, `theme.apply`, `theme.setThemeSource`, `nativeTheme`, `filesOp.*`). Nota: `app.asar` possui divergência de SHA-256 declarada vs observada em `atom.compiled.dist.jsc` (inspecionado com `integrity_policy: "record-and-continue"`).
+- **`appsrc/window/frame.js`** (1.671.751 B, 92 módulos SystemJS): todo o motor do editor, parser, renderizador DOM, `UndoManager`, `Brush`, `Stylize`, `TableEdit`, `SearchPanel` e exportadores.
+- **`appsrc/finder-worker.js`** (415 linhas): Web Worker para indexação e busca rápida de arquivos na pasta aberta.
+- **`lib.asar`** (8.342.504 B): bibliotecas embarcadas (`MathJax4/`, `codemirror/mode.min.js`, `diagram/mermaid.min.js`, `jimp/`, `pdf/pdf-lib.min.js`, `pdf/pdf-designer.min.js`).
+
+## Modelo de Nós (`Mod 13` — `Node` e `TYPE`)
+
+- **15 tipos de bloco top-level:** `paragraph`, `heading`, `blockquote`, `fences`, `hr`, `def_link`, `def_footnote`, `table`, `raw_edit`, `meta_block`, `math_block`, `html_block`, `list`, `toc`, `iframe`.
+- **4 blocos virtuais/estruturais:** `list_item`, `table_row`, `table_cell`, `alert_title`.
+- **35 tipos inline:** `tab`, `plain`, `strong`, `em`, `code`, `underline`, `escape`, `autolink`, `reflink`, `refimg`, `link`, `url`, `br`, `tag`, `comment`, `atag`, `imgtag`, `del`, `todo`, `image`, `footnote`, `attr`, `emoji`, `inline_math`, `subscript`, `superscript`, `linebreak`, `highlight`, `html_entity`, `pants`, `emptyline`, `softbreak`, `html_inline`, `ruby`, `alert_text`.
+
+## Auto-pair, Formatação Inline, Seleção e Atalhos (`Mod 60`, `Mod 2d`, `Mod 48`)
+
+- **`SyntaxMap` (`Mod 2d`):** `strong: ["**","**"]`, `em: ["*","*"]`, `code: ["`","`"]`, `del: ["~~","~~"]`, `underline: ["<u>","</u>"]`, `footnote: ["[^"," ]"]`, `link: ["[","]()"]`, `image: ["![","]()"]`, `highlight: ["==","=="]`, `superscript: ["^","^"]`, `subscript: ["~","~"]`, `inline_math: ["$","$"]`, `comment: ["<!--","-->"]`.
+- **Auto-pair (`handlePair` / `surroundPair`, `Mod 60`):** fecha pares `()`, `[]`, `{}`, `""`, `''` (e, com `autoPairExtendSymbol`, `*`, `` ` ``, `_`, `~`, `^`, `=`, `$`). Com seleção ativa, digitar o delimitador de abertura envolve o texto selecionado (`surroundPair`).
+- **Atalhos `KeyMaster` (`Mod 48`):** `Ctrl+B` (negrito), `Ctrl+I` (itálico), `Ctrl+U` (sublinhado), `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` (undo/redo), `Ctrl+F` (buscar), `Ctrl+H` (substituir no editor; delete char no modo não-Electron), `Ctrl+L` (selecionar linha), `Ctrl+D` (selecionar palavra), `Ctrl+E` (selecionar frase), `Ctrl+A` (selecionar tudo), `Ctrl+Home` / `Ctrl+End` (início/fim do doc), `CmdOrCtrl+/` (modo código-fonte).
+
+Implementado no JotMD: auto-pair e `surroundPair` em `editor/ops/SmartPair.kt` (e remoção de par vazio em `editor/ops/SmartBackspace.kt`).
+
+## Brush (`Mod 2b`), Undo/Redo (`Mod 1b`), Busca (`finder-worker.js` / `Mod 36`) e Export (`Mod 4d`, `Mod 5b`)
+
+- **`Brush` (`Mod 2b`):** fila assíncrona executada a cada **200 ms** (`interval = 200`). `quickParse` (`Mod 19`) converte em tempo real gatilhos digitados no bloco (`# `, `> `, `- `, `1. `, `- [ ] `, `[!NOTE]`). `expand` gerencia `.md-expand` e `.md-focus`; a conversão opcional de cabeçalhos/defs para markdown cru no foco (`simpleExpand`) depende de `File.option.expandSimpleBlock` (desligado por padrão).
+- **`UndoManager` (`Mod 1b`):** snapshots com `SnapFlag` (`NONE=0`, `ADD=1`, `REPLACE=2`, `DELETE=-1`). Coalescência na mesma `source` (`cid#type`) quando `new Date - r.date < 3000` (**3 s**), exceto `REPLACE`. Pilha limitada por peso a **160** comandos.
+- **Workspace (`finder-worker.js`):** extensões suportadas: `md`, `markdown`, `mmd`, `mkd`, `mdwn`, `mdown`, `mdx`, `""` (sem extensão), `mdtxt`, `mdtext`, `apib`, `rmarkdown`, `rmd`, `qmd`, `txt`, `text`. Ignora arquivos/pastas começando com `.`, `node_modules`, `.asar` e arquivos **> 1000 KB** (1 MB). Cache inicial limitado a `_MAX_COUNT = 600` arquivos e `_MAX_ITER = 4000` iterações; `quickFind` limita a `_MAX_QUERY_HIT = 100` resultados.
+- **Busca no documento (`SearchPanel`, `Mod 36`):** debounce de **50 ms** (**100 ms** em busy mode), suporta `caseSensitive`, `wholeWord` e `useRegexp`, teto `MAX_HITS_COUNT = 5000`, substituição única e `replaceAll` (agrupado em um único comando de undo). Implementado no JotMD em `:core-md` (`DocSearch.kt`: `findInDocument`, `replaceAllInText`).
+- **Export HTML / PDF / Imagem (`Mod 4d`, `Mod 5b`, `base.css`):**
+  - **HTML:** `<body class="typora-export">` com `<div class="typora-export-content">` e `<div id="write">` (quando `sidebar` ativo, adiciona `<div class="typora-export-sidebar"><div class="outline-content">...</div></div>` e classes `typora-export-show-outline` + `typora-export-collapse-outline`). CSS inlinado na ordem `base.css` + tema + overrides de impressão/margens (`padding-left/right: 16mm` por padrão, `preLinebreakOnExport`). Implementado no JotMD em `:core-md` (`HtmlExport.kt`: `exportToHtml`).
+  - **PDF:** gera HTML temporário com `forPrint: true` (quebra opcional de página antes de `h1` via `data-breakpage`), chama `export.printToPDF` (tamanho padrão `A4`, margens `16mm`), pós-processa com `pdf-lib` para desenhar cabeçalho/rodapé (`12px`, variáveis `${title}`, `${author}`, `${pageno}`, `${totalpages}`) e `TPDFOutLineMaker` para bookmarks do PDF.
+  - **Imagem:** `exportToImage` usa `imageWidth: 640`, `imageFontSize: "24px"`, captura fatiada via `export.captureImage` e montagem no Web Worker `image-worker.js` com `Jimp`.
 
 ## Duas armadilhas do `jetbrains/markdown`
 
@@ -102,3 +176,53 @@ Notas de comportamento vistas na tela:
 - Alinhamento de coluna de tabela (`:--`, `:-:`, `--:`) é respeitado.
 
 Arquivo de referência usado no teste visual: `docs/typora-ref.md`.
+
+## Tokens do Tema Escuro (`night.css`, `codeblock.dark.css`, `sourcemode.dark.css`) e GitHub Alerts (`base.css`)
+
+Extraído de `C:\Program Files\Typora\resources\style\themes\night.css`, `night/codeblock.dark.css`, `night/sourcemode.dark.css` e `style/base.css`.
+
+### Tema escuro (`night`)
+
+Raiz: `html { font-size: 16px }`, `line-height: 1.625rem`. Largura máxima do texto (`#write`): `914px` (`1024px` em `>=1400px`, `1200px` em `>=1800px`).
+
+| Token / Elemento | Valor |
+|---|---|
+| `--bg-color` (fundo do editor) | `#363B40` |
+| `--side-bar-bg-color` (gaveta lateral) | `#2E3033` |
+| `--text-color` | `#b8bfc6` |
+| `--primary-color` | `#6dc1e7` |
+| `--select-text-bg-color` (seleção) | `#4a89dc` (texto `#fff`) |
+| `--active-file-bg-color` / borda / texto | `rgb(34, 34, 34)` (`#222222`) / `#8d8df0` / `#ffffff` |
+| `--item-hover-bg-color` / texto | `#70717d` / `#ffffff` |
+| `--control-text-color` / hover | `#b7b7b7` / `#eee` |
+| `--search-select-bg-color` | `#428bca` |
+| Busca hit (`.md-search-hit`) | `rgba(199, 140, 60, 0.81)`, texto `#eee` |
+| Headings (`h1`–`h6`) | `#DEDEDE` (`h4`, `h6`: `white`); tamanhos `2.5 / 1.63 / 1.17 / 1.12 / 0.97 / 0.93rem` |
+| Negrito (`strong` / `b` / `th`) | `#DEDEDE` |
+| Link (`a`) | `#e0e0e0` sublinhado (hover `#fff`) |
+| Citação (`blockquote`) | borda esquerda `2px solid #474d54`, texto `#9DA2A6` |
+| Código inline (`code`) | fundo `rgba(0, 0, 0, 0.05)`, `0.875em` |
+| Bloco de código (`pre.md-fences` / gutters) | fundo `#333` (`--rawblock-edit-panel-bd: #333`) |
+| YAML front matter (`pre.md-meta-block`) | fundo `transparent`, borda inferior `1px dashed #ccc` |
+| Tabela (`th`, `td`) | borda `1px solid #474d54` |
+| Regra horizontal (`hr`) | altura `2px`, fundo `#474d54`, margem `24px 0` |
+| Marca-texto (`mark`) | fundo `#D3D40E` |
+| Focus mode (inativos vs foco) | `#686868` vs `#fff` |
+| Codeblock syntax (`codeblock.dark.css`) | keyword `#C88FD0`, string `#D26B6B`, comment `#DA924A`, header/def `#8d8df0`, number `#64AB8F`, atom `#84B6CB`, builtin `#f3b3f8`, tag `#7DF46A`, attribute `#7575E4`, variable-2 `#9FBAD5`, variable-3 `#1cc685` |
+| Source mode (`sourcemode.dark.css`) | header `#cebcca`, comment/code `#8aa1e1`, string `#A7A7D9`, atom/number `#848695` itálico, link `#95B94B`, linha ativa `rgba(51, 51, 51, 0.72)` |
+
+Implementado no JotMD em `editor/MdTheme.kt` (`MdTokens.isDark` / `MdPalette`).
+
+### GitHub Alerts (`> [!NOTE]` etc.)
+
+Definido em `style/base.css` (borda esquerda `0.25em solid`, `padding: 0 1em`) com overrides de texto em `night.css`:
+
+| Tipo | Claro (`base.css`) | Escuro (`night.css`) |
+|---|---|---|
+| `note` | `#0969da` | `rgb(47, 129, 247)` (`#2f81f7`) |
+| `important` | `#8250df` | `rgb(163, 113, 247)` (`#a371f7`) |
+| `warning` | `#9a6700` | `rgb(210, 153, 34)` (`#d29922`) |
+| `tip` | `#1f883d` | `#1f883d` *(herda de `base.css`)* |
+| `caution` | `#cf222e` | `#cf222e` *(herda de `base.css`)* |
+
+Implementado no JotMD em `:core-md` (`Alerts.kt`, `alertOf`) e `editor/BlockRenderer.kt`.

@@ -33,9 +33,17 @@ Ordem de leitura:
 - **Busca:** FTS4 no SQLite nativo (`SQLiteOpenHelper`), não Room.
   Diverge do `AI_CONTEXT.md`, de propósito: uma tabela não justifica a
   dependência.
-- **Typora é proprietário.** Comportamento é observado em caixa-preta
-  (digitar, salvar, ler o `.md`) e CSS/temas não protegidos. Nunca
-  decompilar, descriptografar ou copiar código do Typora.
+- **Inspeção com `morluto/rea` liberada:** usar o `rea` (MCP e CLI) para
+  inspecionar o Typora instalado (`C:\Program Files\Typora\resources`:
+  CSS/temas, HTML, JS/Electron, `app.asar`, `appsrc/`, `page-dist/`) e
+  APKs Android de referência, extraindo regras de comportamento, tokens
+  visuais e fluxos de UI/UX para reimplementar do zero em Kotlin/Compose
+  no JotMD.
+- **App Windows em Compose Desktop (`:desktop`):** o app desktop Windows
+  usa Kotlin/JVM + Compose Multiplatform Desktop compartilhando `:core-md` e
+  os fontes comuns de `:editor` (`editor/src/main/kotlin`), isolando apenas
+  `ImagePreview` por plataforma (`editor/src/androidMain` no Android e
+  `desktop/src/main` no Windows).
 
 ## Stack
 
@@ -53,9 +61,10 @@ minSdk 26, Compose BOM 2025.06.01, `org.jetbrains:markdown` 0.7.3. Versões em
 
 | Módulo | Conteúdo |
 |---|---|
-| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`. |
-| `:editor` | Compose. `EditorState` (estado e operações), `BlockEditor` (foco + teclas), `BlockRenderer`/`BlockParts`/`InlineText` (renderização), `Toolbar`, `ImagePreview`, `MdTheme` (tokens). Operações puras em `editor/ops/`: `BlockOps` (`splitAt`, `mergeWithPrevious`, `reparse`), `UndoStack`, `TaskOps`, `SmartEnter`. |
-| `:app` | Shell. `MainActivity` (gaveta, busca, links), `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
+| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocSearch` (`findInDocument`, `replaceAllInText`), `HtmlExport` (`exportToHtml`). |
+| `:editor` | Compose. `EditorState` (estado e operações), `BlockEditor` (foco + teclas), `BlockRenderer`/`BlockParts`/`InlineText` (renderização, GitHub Alerts e `==highlight==`), `Toolbar`, `ImagePreview`, `MdTheme` (tema claro/escuro via `MdTokens.isDark` / `MdPalette`), modo código-fonte (`isSourceMode`). Operações puras em `editor/ops/`: `BlockOps` (`splitAt`, `mergeWithPrevious`, `reparse`), `UndoStack`, `TaskOps`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`. |
+| `:app` | Shell Android. `MainActivity` (gaveta, multi-abas, tema escuro, busca na pasta e na nota, export HTML via SAF, links), `TabManager`, `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
+| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, árvore `.md`, busca full-text na pasta e na nota, tema escuro, export HTML, wikilinks/tags, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
 
 ## Estado (2026-11-20)
 
@@ -75,18 +84,35 @@ Tag `v0.1.0` publicada. Feito e verificado em tablet:
   "Nota não encontrada"); `#tags` clicáveis (abrem a busca pela tag).
 - Enter inteligente (`ops/SmartEnter.kt`): continua lista, numerada, tarefa
   e citação; item vazio sai da estrutura. Igual ao que o Typora grava.
+
+Implementado em código neste ciclo (verificação visual e funcional em tablet
+Android via `adb` ainda pendente):
+
 - YAML front matter: `BlockType.FRONT_MATTER`, um bloco só no topo,
   renderizado como o `pre.md-meta-block` do Typora (YAML sem os `---`,
   monoespaçado, cinza, fundo `#f7f7f7`). Inline no documento, não em painel
   lateral como o `AI_CONTEXT.md` sugeria: o Typora faz assim. Testes JVM
-  verdes; verificação visual no tablet ainda pendente.
+  verdes.
+- Edição inteligente no estilo Typora (`editor/ops/`): Backspace em cascata e
+  remoção de par vazio (`SmartBackspace.kt`), `Tab`/`Shift+Tab`
+  (`SmartTab.kt`), Auto-pair/`surroundPair` (`SmartPair.kt`) e `Delete` no
+  fim/bloco vazio (`SmartDelete.kt`).
+- Multi-abas e shell desktop: `TabManager.kt` no Android (`:app`) e app
+  desktop Windows em Compose Desktop (`:desktop`) com abas, árvore `.md`,
+  busca full-text na pasta e na nota, tema escuro e export HTML.
+- Tema escuro `night` (`MdTheme.kt`: `MdTokens.isDark` / `MdPalette`), modo
+  código-fonte (`isSourceMode`), GitHub Alerts (`Alerts.kt`,
+  `BlockRenderer.kt`) e marca-texto `==highlight==`.
+- Busca e substituição local na nota (`DocSearch.kt`: `findInDocument`,
+  `replaceAllInText`) e exportação HTML (`HtmlExport.kt`: `exportToHtml`,
+  via SAF no `:app` e em disco no `:desktop`).
 
 Pendente:
 
-- Backspace no início de item/heading no estilo Typora: ainda não observado.
-- F6: tema escuro, export HTML/PDF, desempenho em 5k+ linhas, publicação
-  F-Droid.
-- `README.md` ainda descreve o estado da F4; atualizar quando fechar a F5.
+- Verificação visual e funcional em tablet Android via `adb` para os recursos
+  consolidados após a `v0.1.0`.
+- F6 restante: exportação PDF nativa, desempenho em 5k+ linhas e
+  empacotamento/publicação F-Droid.
 
 ## Armadilhas já pagas (não repetir)
 
@@ -132,8 +158,12 @@ Pendente:
   Um commit por fase/feature, `test` + `assembleDebug` passando.
 - **O dono também commita em paralelo.** Sempre `git fetch` antes de
   `git push`; se divergiu, `git pull --rebase`, rebuild, testes, push.
-- Comportamento novo "como o Typora" deve ser observado no Typora antes e
-  registrado no `DESIGN.md` (tabela do que o Typora grava).
+- Comportamento novo "como o Typora" deve ser observado ou inspecionado via
+  `rea` no Typora antes e registrado no `DESIGN.md`.
+- **Execução em paralelo com múltiplos subagentes:** tarefas ou features
+  independentes devem ser sempre paralelizadas usando múltiplos subagentes
+  (`invoke_subagent`) com conjuntos disjuntos de arquivos, consolidando o
+  build/testes na thread principal.
 
 ## Teste em aparelho (tablet Android via adb wireless)
 
