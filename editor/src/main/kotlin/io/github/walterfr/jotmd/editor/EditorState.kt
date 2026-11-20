@@ -13,6 +13,7 @@ import io.github.walterfr.jotmd.core.DocState
 import io.github.walterfr.jotmd.core.parse
 import io.github.walterfr.jotmd.core.replaceAllInText
 import io.github.walterfr.jotmd.core.serialize
+import io.github.walterfr.jotmd.editor.ops.SmartBackspace
 import io.github.walterfr.jotmd.editor.ops.SmartDelete
 import io.github.walterfr.jotmd.editor.ops.SmartEnter
 import io.github.walterfr.jotmd.editor.ops.UndoFrame
@@ -47,6 +48,9 @@ import io.github.walterfr.jotmd.editor.ops.toggleTask
 class EditorState(initialText: String = "") {
     private var ids = BlockIdSource()
     private val undo = UndoStack()
+    private var staleEchoText: String? = null
+    private var staleEchoTarget: String? = null
+    private var staleEchoUntilMs: Long = 0L
 
     var autoPairEnabled: Boolean = true
     var isSourceMode: Boolean by mutableStateOf(false)
@@ -71,12 +75,14 @@ class EditorState(initialText: String = "") {
         focusedId = null
         editValue = TextFieldValue("")
         undo.clear()
+        clearStaleEcho()
     }
 
     fun focus(block: Block) {
         if (focusedId == block.id) return
         focusedId = block.id
         editValue = TextFieldValue(block.source, TextRange(block.source.length))
+        clearStaleEcho()
     }
 
     /**
@@ -86,7 +92,45 @@ class EditorState(initialText: String = "") {
      */
     fun edit(value: TextFieldValue, from: BlockId? = focusedId) {
         if (from == null || from != focusedId) return
+        if (isStaleImeEcho(value)) return
+        clearStaleEcho()
+
         val prev = editValue
+
+        // No teclado virtual Android (SwiftKey/Gboard), Backspace e às vezes Enter
+        // chegam via InputConnection -> onValueChange em vez de onPreviewKeyEvent.
+        if (isSingleCharDeleteBeforeCursor(prev, value)) {
+            val index = doc.blocks.indexOfFirst { it.id == from }
+            val sb = if (index >= 0) smartBackspace(prev.text, prev.selection.start) else null
+            if (sb != null) {
+                applySmartBackspaceResult(index, sb)
+                markStaleEchoIfRewritten(value.text)
+                return
+            }
+        }
+        if (isSingleNewlineInsertAtCursor(prev, value)) {
+            val block = doc.blocks.find { it.id == from }
+            if (block != null) {
+                when {
+                    block.type == BlockType.FRONT_MATTER && exitFrontMatterOnEnter() -> {
+                        markStaleEchoIfRewritten(value.text)
+                        return
+                    }
+                    (block.type == BlockType.UNORDERED_LIST ||
+                        block.type == BlockType.ORDERED_LIST ||
+                        block.type == BlockType.BLOCKQUOTE) && smartEnterAtCursor() -> {
+                        markStaleEchoIfRewritten(value.text)
+                        return
+                    }
+                    block.type == BlockType.PARAGRAPH || block.type == BlockType.HEADING -> {
+                        splitAtCursor()
+                        markStaleEchoIfRewritten(value.text)
+                        return
+                    }
+                }
+            }
+        }
+
         val paired = if (autoPairEnabled && value.text != prev.text) {
             applySmartPair(
                 prev.text,
@@ -105,6 +149,7 @@ class EditorState(initialText: String = "") {
         } else {
             value
         }
+        if (paired != null) markStaleEchoIfRewritten(value.text)
         syncDocFromEdit()
     }
 
@@ -287,17 +332,7 @@ class EditorState(initialText: String = "") {
 
         val r = smartBackspace(editValue.text, editValue.selection.start)
         if (r != null) {
-            recordUndoCheckpoint()
-            val block = doc.blocks[index]
-            val newType = if (block.type == BlockType.FRONT_MATTER || block.type == BlockType.CODE_FENCE) {
-                block.type
-            } else {
-                parse(r.text, frontMatter = false).blocks.firstOrNull()?.type ?: BlockType.PARAGRAPH
-            }
-            editValue = TextFieldValue(r.text, TextRange(r.cursor))
-            doc = doc.copy(
-                blocks = doc.blocks.map { if (it.id == id) it.copy(type = newType, source = r.text) else it },
-            )
+            applySmartBackspaceResult(index, r)
             return true
         }
 
@@ -464,10 +499,66 @@ class EditorState(initialText: String = "") {
         focusedId = frame.focusedId
         val block = frame.focusedId?.let { fid -> doc.blocks.find { it.id == fid } }
         editValue = if (block != null) TextFieldValue(block.source, TextRange(block.source.length)) else TextFieldValue("")
+        clearStaleEcho()
     }
 
     private fun recordUndoCheckpoint(force: Boolean = false) {
         undo.recordBeforeChange(currentFrame(), force = force)
+    }
+
+    private fun applySmartBackspaceResult(index: Int, r: SmartBackspace) {
+        recordUndoCheckpoint()
+        val block = doc.blocks[index]
+        val newType = if (block.type == BlockType.FRONT_MATTER || block.type == BlockType.CODE_FENCE) {
+            block.type
+        } else {
+            parse(r.text, frontMatter = false).blocks.firstOrNull()?.type ?: BlockType.PARAGRAPH
+        }
+        editValue = TextFieldValue(r.text, TextRange(r.cursor))
+        doc = doc.copy(
+            blocks = doc.blocks.mapIndexed { i, b -> if (i == index) b.copy(type = newType, source = r.text) else b },
+        )
+    }
+
+    private fun isSingleCharDeleteBeforeCursor(prev: TextFieldValue, next: TextFieldValue): Boolean {
+        if (!prev.selection.collapsed || !next.selection.collapsed) return false
+        val c = prev.selection.start
+        return c > 0 &&
+            next.selection.start == c - 1 &&
+            next.text.length == prev.text.length - 1 &&
+            next.text.regionMatches(0, prev.text, 0, c - 1) &&
+            next.text.regionMatches(c - 1, prev.text, c, prev.text.length - c)
+    }
+
+    private fun isSingleNewlineInsertAtCursor(prev: TextFieldValue, next: TextFieldValue): Boolean {
+        if (!prev.selection.collapsed || !next.selection.collapsed) return false
+        val c = prev.selection.start
+        return next.selection.start == c + 1 &&
+            next.text.length == prev.text.length + 1 &&
+            next.text.getOrNull(c) == '\n' &&
+            next.text.regionMatches(0, prev.text, 0, c) &&
+            next.text.regionMatches(c + 1, prev.text, c, prev.text.length - c)
+    }
+
+    private fun markStaleEchoIfRewritten(rawInputText: String) {
+        if (rawInputText != editValue.text) {
+            staleEchoText = rawInputText
+            staleEchoTarget = editValue.text
+            staleEchoUntilMs = System.currentTimeMillis() + 120L
+        }
+    }
+
+    private fun isStaleImeEcho(value: TextFieldValue): Boolean {
+        val echo = staleEchoText ?: return false
+        return System.currentTimeMillis() <= staleEchoUntilMs &&
+            value.text == echo &&
+            editValue.text == staleEchoTarget
+    }
+
+    private fun clearStaleEcho() {
+        staleEchoText = null
+        staleEchoTarget = null
+        staleEchoUntilMs = 0L
     }
 
     private fun hasFenceOpener(text: String): Boolean = text.contains("```") || text.contains("~~~")

@@ -603,4 +603,28 @@ class EditorStateTest {
         assertEquals(2501, s.doc.blocks.size)
         assertEquals(bigText.length + 2, s.text().length)
     }
+
+    @Test
+    fun `edit via IME virtual aplica smartBackspace e smartEnter ao apagar ou inserir quebra`() {
+        val s = EditorState("- [x] um\n")
+        s.focus(s.doc.blocks[0])
+        // IME insere "\n" via InputConnection.commitText em vez de KeyEvent.Enter
+        s.edit(TextFieldValue("- [x] um\n", TextRange(9)))
+        assertEquals("- [x] um\n- [ ] ", s.editValue.text)
+
+        // IME envia deleteSurroundingText(1, 0) removendo espaço após "- [ ] " -> cascata
+        val cur = s.editValue.text
+        val rawBs1 = cur.dropLast(1)
+        s.edit(TextFieldValue(rawBs1, TextRange(cur.length - 1)))
+        assertEquals("- [x] um\n- ", s.editValue.text)
+
+        // Eco imediato do mesmo batchEdit do IME (como SwiftKey após rewrite) é descartado
+        s.edit(TextFieldValue(rawBs1, TextRange(cur.length - 1)))
+        assertEquals("- [x] um\n- ", s.editValue.text)
+
+        // Segundo deleteSurroundingText(1, 0) remove marcador "- " -> linha vazia
+        val cur2 = s.editValue.text
+        s.edit(TextFieldValue(cur2.dropLast(1), TextRange(cur2.length - 1)))
+        assertEquals("- [x] um\n", s.editValue.text)
+    }
 }
