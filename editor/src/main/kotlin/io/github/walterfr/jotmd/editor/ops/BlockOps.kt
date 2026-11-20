@@ -44,7 +44,7 @@ fun mergeWithPrevious(blocks: List<Block>, targetId: BlockId, ids: BlockIdSource
     val target = blocks[index]
     val mergedText = prev.source + prev.trailing + target.source
 
-    val pieces = parse(mergedText, ids).blocks
+    val pieces = parse(mergedText, ids, frontMatter = index - 1 == 0).blocks
     val replacement = if (pieces.isEmpty()) {
         listOf(Block(ids.next(), prev.type, mergedText, target.trailing))
     } else {
@@ -74,7 +74,7 @@ fun reparse(blocks: List<Block>, fromIndex: Int, ids: BlockIdSource): List<Block
 
     val tail = blocks.subList(fromIndex, blocks.size)
     val tailText = tail.joinToString("") { it.source + it.trailing }
-    val reparsed = parse(tailText, ids).blocks
+    val reparsed = parse(tailText, ids, frontMatter = fromIndex == 0).blocks
 
     val stabilized = reparsed.mapIndexed { i, fresh ->
         val old = tail.getOrNull(i)
@@ -88,4 +88,4 @@ fun reparse(blocks: List<Block>, fromIndex: Int, ids: BlockIdSource): List<Block
 }
 
 private fun typeOfOrElse(text: String, fallback: BlockType) =
-    parse(text).blocks.firstOrNull()?.type ?: fallback
+    parse(text, frontMatter = false).blocks.firstOrNull()?.type ?: fallback

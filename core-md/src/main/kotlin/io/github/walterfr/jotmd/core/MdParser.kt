@@ -21,7 +21,15 @@ private val flavour = GFMFlavourDescriptor()
  * Note que a fatia vem do texto original, não de uma reimpressão do AST — o AST
  * só é consultado para saber onde cada bloco começa e de que tipo ele é.
  */
-fun parse(text: String, ids: BlockIdSource = BlockIdSource()): DocState {
+fun parse(text: String, ids: BlockIdSource = BlockIdSource(), frontMatter: Boolean = true): DocState {
+    // Front matter só existe no início do ARQUIVO. Quem parseia um trecho do
+    // meio (reparse, split, merge) passa false, senão um `---` no meio viraria metadado.
+    val fm = if (frontMatter) frontMatterOf(text) else null
+    if (fm != null) {
+        val head = Block(ids.next(), BlockType.FRONT_MATTER, fm.raw, "")
+        val rest = parse(text.substring(fm.end), ids, frontMatter = false)
+        return DocState(leading = "", blocks = listOf(head.copy(trailing = rest.leading)) + rest.blocks)
+    }
     if (text.isEmpty()) return DocState(leading = "", blocks = emptyList())
 
     val root = MarkdownParser(flavour).buildMarkdownTreeFromString(text)

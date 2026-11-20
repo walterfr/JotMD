@@ -20,6 +20,8 @@ enum class BlockType {
     HORIZONTAL_RULE,
     HTML,
     LINK_DEFINITION,
+    /** YAML `---` ... `---` na linha 1 do documento. */
+    FRONT_MATTER,
     OTHER,
 }
 

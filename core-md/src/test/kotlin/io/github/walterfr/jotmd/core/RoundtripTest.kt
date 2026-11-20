@@ -40,6 +40,10 @@ class RoundtripTest {
         "acentos e emoji" to "# Ação, coração 🎉\n\ntexto\n",
         "tab dentro de parágrafo" to "a\tb\n",
         "underscore e asterisco soltos" to "a * b _ c ** d\n",
+        "front matter" to "---\ntitle: x\ntags: [a, b]\n---\n\n# Título\n",
+        "front matter CRLF" to "---\r\ntitle: x\r\n---\r\n\r\ntexto\r\n",
+        "só front matter" to "---\na: b\n---",
+        "front matter colado no texto" to "---\na: b\n---\ntexto\n",
     )
 
     @Test
@@ -102,6 +106,20 @@ class RoundtripTest {
         assertEquals("\n\n", doc.leading)
         assertEquals(1, doc.blocks.size)
         assertTrue(doc.blocks.none { it.source.isEmpty() })
+    }
+
+    @Test
+    fun `front matter na linha 1 vira um bloco só, o resto segue normal`() {
+        val doc = parse("---\ntitle: x\n---\n\n# Título\n")
+        assertEquals(listOf(BlockType.FRONT_MATTER, BlockType.HEADING), doc.blocks.map { it.type })
+        assertEquals("---\ntitle: x\n---", doc.blocks[0].source)
+        assertEquals("\n\n", doc.blocks[0].trailing)
+    }
+
+    @Test
+    fun `traços fora da linha 1 ou com frontMatter false nunca viram front matter`() {
+        assertTrue(parse("texto\n\n---\na: b\n---\n").blocks.none { it.type == BlockType.FRONT_MATTER })
+        assertTrue(parse("---\na: b\n---\n", frontMatter = false).blocks.none { it.type == BlockType.FRONT_MATTER })
     }
 
     @Test

@@ -10,6 +10,24 @@ import kotlin.test.assertTrue
 
 class BlockOpsTest {
 
+    // ---- front matter ----
+
+    @Test
+    fun `reparse no meio do documento não transforma traços em front matter`() {
+        val ids = BlockIdSource()
+        val doc = parse("intro\n\n---\n\na: b\n", ids)
+        // Usuário apaga a linha em branco: "---\na: b\n---" fica no meio do documento.
+        val edited = doc.blocks.toMutableList().apply { set(1, get(1).copy(source = "---\na: b\n---")) }
+        assertTrue(reparse(edited, 1, ids).none { it.type == BlockType.FRONT_MATTER })
+    }
+
+    @Test
+    fun `reparse do início mantém o front matter`() {
+        val ids = BlockIdSource()
+        val doc = parse("---\na: b\n---\n\ntexto\n", ids)
+        assertEquals(BlockType.FRONT_MATTER, reparse(doc.blocks, 0, ids).first().type)
+    }
+
     // ---- splitAt ----
 
     @Test

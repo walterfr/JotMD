@@ -33,6 +33,7 @@ object MdTokens {
     val tableBorder = Color(0xFFD9DEE3)
     val inlineCodeBackground = Color(0xFFF3F4F4)
     val fenceBackground = Color(0xFFF8F8F8)
+    val metaBackground = Color(0xFFF7F7F7) // pre.md-meta-block (front matter)
 
     /** `margin: 0.8em 0` nos blocos. 0.8 * 16 = 12.8 */
     val blockGap = 12.8.dp

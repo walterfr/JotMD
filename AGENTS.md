@@ -75,10 +75,14 @@ Tag `v0.1.0` publicada. Feito e verificado em tablet:
   "Nota não encontrada"); `#tags` clicáveis (abrem a busca pela tag).
 - Enter inteligente (`ops/SmartEnter.kt`): continua lista, numerada, tarefa
   e citação; item vazio sai da estrutura. Igual ao que o Typora grava.
+- YAML front matter: `BlockType.FRONT_MATTER`, um bloco só no topo,
+  renderizado como o `pre.md-meta-block` do Typora (YAML sem os `---`,
+  monoespaçado, cinza, fundo `#f7f7f7`). Inline no documento, não em painel
+  lateral como o `AI_CONTEXT.md` sugeria: o Typora faz assim. Testes JVM
+  verdes; verificação visual no tablet ainda pendente.
 
 Pendente:
 
-- F5: exibir YAML front matter (função pura existe em `:core-md`, sem UI).
 - Backspace no início de item/heading no estilo Typora: ainda não observado.
 - F6: tema escuro, export HTML/PDF, desempenho em 5k+ linhas, publicação
   F-Droid.
@@ -108,7 +112,14 @@ Pendente:
 7. **Wikilinks/tags na renderização** são "specials" por posição no source
    (`Ctx` em `InlineText.kt`), viram URIs internas `jotmd:wiki:` /
    `jotmd:tag:` e são interceptados por `LocalUriHandler` no `MainActivity`.
-8. **Corpus de teste em `docs/*.md` é `-text`** no `.gitattributes`: bytes
+8. **Front matter só na linha 1 do arquivo.** `parse(text, ids, frontMatter)`:
+   o default `true` vale só para o documento inteiro. Quem parseia um trecho
+   (`reparse` com `fromIndex > 0`, `mergeWithPrevious` fora do topo,
+   `splitAt`) passa `false`, senão um `---` no meio vira metadado.
+9. **Scripts Python via heredoc no Git Bash do Windows** trocaram `"\\n"` por
+   newline real ao editar `.kt`. Para editar código, use a ferramenta de
+   edição do agente, não `python - <<EOF`.
+10. **Corpus de teste em `docs/*.md` é `-text`** no `.gitattributes`: bytes
    exatos, sem normalização de fim de linha.
 
 ## Regras de trabalho

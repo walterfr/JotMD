@@ -53,6 +53,7 @@ fun BlockRenderer(
         BlockType.CODE_FENCE -> CodeBlock(block.source, fenced = true, modifier = modifier)
         BlockType.CODE_INDENTED -> CodeBlock(block.source, fenced = false, modifier = modifier)
         BlockType.HORIZONTAL_RULE -> RuleBlock(modifier)
+        BlockType.FRONT_MATTER -> MetaBlock(block.source, modifier)
         BlockType.PARAGRAPH -> {
             val image = remember(block.source) { soleImage(block.source) }
             if (image != null) {
@@ -236,6 +237,28 @@ private fun CodeBlock(source: String, fenced: Boolean, modifier: Modifier = Modi
             )
         }
     }
+}
+
+/**
+ * Front matter como o Typora (`pre.md-meta-block` do tema github): YAML cru sem
+ * os delimitadores `---`, monoespaçado, 85%, cinza, fundo #f7f7f7.
+ */
+@Composable
+private fun MetaBlock(source: String, modifier: Modifier = Modifier) {
+    val yaml = remember(source) { source.lines().drop(1).dropLast(1).joinToString("\n") }
+    BasicText(
+        yaml,
+        modifier
+            .fillMaxWidth()
+            .background(MdTokens.metaBackground, RoundedCornerShape(MdTokens.cornerRadius))
+            .padding(16.dp),
+        style = bodyStyle.copy(
+            color = MdTokens.muted,
+            fontFamily = FontFamily.Monospace,
+            fontSize = MdTokens.base * 0.85f,
+            lineHeight = MdTokens.base * 0.85f * 1.45f,
+        ),
+    )
 }
 
 @Composable
