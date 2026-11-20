@@ -187,42 +187,39 @@ private fun TableBlock(source: String, modifier: Modifier = Modifier) {
         ParagraphBlock(source, modifier)
         return
     }
-    Column(
+    // Coluna por coluna, não linha por linha: com `width(IntrinsicSize.Max)` a
+    // coluna tem a largura da célula mais larga, e as células preenchem essa
+    // largura. Célula com largura própria por linha (o que havia) desalinhava as
+    // colunas e deixava centro/direita sem efeito — visto no tablet.
+    Row(
         modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState()),
     ) {
-        TableRowView(table.headers, table.alignments, header = true)
-        for (row in table.rows) {
-            TableRowView(row, table.alignments)
+        table.headers.indices.forEach { col ->
+            val align = when (table.alignments.getOrNull(col)) {
+                TableAlignment.CENTER -> TextAlign.Center
+                TableAlignment.RIGHT -> TextAlign.End
+                else -> TextAlign.Start
+            }
+            Column(Modifier.width(IntrinsicSize.Max).widthIn(min = 72.dp)) {
+                TableCell(table.headers[col], align, header = true)
+                for (row in table.rows) TableCell(row[col], align)
+            }
         }
     }
 }
 
 @Composable
-private fun TableRowView(
-    cells: List<String>,
-    alignments: List<TableAlignment?>,
-    header: Boolean = false,
-) {
-    Row(Modifier.fillMaxWidth()) {
-        cells.forEachIndexed { index, cell ->
-            BasicText(
-                inlineText(cell),
-                Modifier
-                    .widthIn(min = 72.dp)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                style = bodyStyle.copy(
-                    fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
-                    textAlign = when (alignments.getOrNull(index)) {
-                        TableAlignment.CENTER -> TextAlign.Center
-                        TableAlignment.RIGHT -> TextAlign.End
-                        else -> TextAlign.Start
-                    },
-                ),
-            )
-        }
-    }
+private fun TableCell(text: String, align: TextAlign, header: Boolean = false) {
+    BasicText(
+        inlineText(text),
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+        style = bodyStyle.copy(
+            fontWeight = if (header) FontWeight.Bold else FontWeight.Normal,
+            textAlign = align,
+        ),
+    )
     Box(Modifier.fillMaxWidth().height(1.dp).background(MdTokens.tableBorder))
 }
 
