@@ -123,6 +123,16 @@ class RoundtripTest {
     }
 
     @Test
+    fun `front matter com BOM UTF-8 reconhece bloco e preserva BOM no roundtrip`() {
+        val withBom = "\uFEFF---\ntitle: x\n---\n\n# Título\n"
+        val doc = parse(withBom)
+        assertEquals("\uFEFF", doc.leading)
+        assertEquals(listOf(BlockType.FRONT_MATTER, BlockType.HEADING), doc.blocks.map { it.type })
+        assertEquals("---\ntitle: x\n---", doc.blocks[0].source)
+        assertEquals(withBom, serialize(doc))
+    }
+
+    @Test
     fun `ids dos blocos são únicos`() {
         val doc = parse(readResource("typora-ref.md"))
         val ids = doc.blocks.map { it.id }

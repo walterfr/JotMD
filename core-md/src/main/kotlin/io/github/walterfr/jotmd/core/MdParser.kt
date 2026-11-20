@@ -22,13 +22,17 @@ private val flavour = GFMFlavourDescriptor()
  * só é consultado para saber onde cada bloco começa e de que tipo ele é.
  */
 fun parse(text: String, ids: BlockIdSource = BlockIdSource(), frontMatter: Boolean = true): DocState {
-    // Front matter só existe no início do ARQUIVO. Quem parseia um trecho do
-    // meio (reparse, split, merge) passa false, senão um `---` no meio viraria metadado.
-    val fm = if (frontMatter) frontMatterOf(text) else null
+    // Front matter só existe no início do ARQUIVO (permitindo BOM UTF-8 opcional).
+    // Quem parseia um trecho do meio (reparse, split, merge) passa false, senão um `---` no meio viraria metadado.
+    val bomOffset = if (frontMatter && text.startsWith('\uFEFF')) 1 else 0
+    val fm = if (frontMatter) frontMatterOf(if (bomOffset == 0) text else text.substring(1)) else null
     if (fm != null) {
         val head = Block(ids.next(), BlockType.FRONT_MATTER, fm.raw, "")
-        val rest = parse(text.substring(fm.end), ids, frontMatter = false)
-        return DocState(leading = "", blocks = listOf(head.copy(trailing = rest.leading)) + rest.blocks)
+        val rest = parse(text.substring(bomOffset + fm.end), ids, frontMatter = false)
+        return DocState(
+            leading = text.substring(0, bomOffset),
+            blocks = listOf(head.copy(trailing = rest.leading)) + rest.blocks,
+        )
     }
     if (text.isEmpty()) return DocState(leading = "", blocks = emptyList())
 
