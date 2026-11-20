@@ -1,0 +1,190 @@
+package io.github.walterfr.jotmd.core
+
+import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class HtmlExportTest {
+
+    @Test
+    fun `estrutura Typora e escape de título`() {
+        val html = exportToHtml("Olá", title = "Nota <1> & \"A\"")
+        assertTrue(html.startsWith("<!doctype html>"))
+        assertTrue("<meta charset=\"utf-8\" />" in html)
+        assertTrue("<title>Nota &lt;1&gt; &amp; &quot;A&quot;</title>" in html)
+        assertTrue("<body class=\"typora-export\">" in html)
+        assertTrue("<div class=\"typora-export-content\">" in html)
+        assertTrue("<div id=\"write\">" in html)
+    }
+
+    @Test
+    fun `emite tokens de tema claro e escuro com classes esperadas`() {
+        val light = exportToHtml("x", darkTheme = false)
+        for (token in listOf(
+            "#ffffff", "#333333", "#4183C4", "#dfe2e5", "#f8f8f8", "#f3f4f4",
+            "#e7eaed", "#f7f7f7", "#eeeeee", "#e7e7e7", "max-width: 860px",
+            "#0969da", "#8250df", "#9a6700", "#1f883d", "#cf222e",
+            ".md-meta-block", ".md-fences", ".md-alert", ".md-alert-note",
+            ".md-alert-tip", ".md-alert-important", ".md-alert-warning",
+            ".md-alert-caution", ".md-alert-title", "input[type=\"checkbox\"]",
+        )) {
+            assertTrue(token in light, "token claro ausente: $token")
+        }
+
+        val dark = exportToHtml("x", darkTheme = true)
+        for (token in listOf(
+            "#363B40", "#b8bfc6", "#DEDEDE", "#6dc1e7", "#474d54",
+            "#333333", "#2E3033", "#D3D40E", "#222",
+            "#2f81f7", "#a371f7", "#d29922", "#1f883d", "#cf222e",
+        )) {
+            assertTrue(token in dark, "token escuro ausente: $token")
+        }
+    }
+
+    @Test
+    fun `converte front matter e mantém traços no meio como hr`() {
+        val md = "---\ntitle: <Teste>\ntags: [a, b]\n---\n\n---\n"
+        val html = exportToHtml(md)
+        assertTrue("<pre class=\"md-meta-block\">title: &lt;Teste&gt;\ntags: [a, b]</pre>" in html)
+        assertTrue("<hr />" in html)
+    }
+
+    @Test
+    fun `converte headings ATX e Setext sem vazar marcadores`() {
+        val md = "# H1\n\n###### H6\n\nSetext Um\n=========\n\nSetext Dois\n-----------\n"
+        val html = exportToHtml(md)
+        assertTrue("<h1>H1</h1>" in html)
+        assertTrue("<h6>H6</h6>" in html)
+        assertTrue("<h1>Setext Um</h1>" in html)
+        assertTrue("<h2>Setext Dois</h2>" in html)
+    }
+
+    @Test
+    fun `converte citação comum e todos os tipos de alerta`() {
+        val md = """
+            > Citação normal
+            > segunda linha
+
+            > [!NOTE]
+            > Nota simples
+
+            > [!TIP] Dica direta
+
+            > [!IMPORTANT]
+            > Aviso importante
+
+            > [!WARNING]
+            > Cuidado
+
+            > [!CAUTION]
+            > Perigo
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<blockquote><p>Citação normal\nsegunda linha</p></blockquote>" in html)
+        assertFalse("&gt; Citação" in html)
+        assertTrue("<div class=\"md-alert md-alert-note\"><p class=\"md-alert-title\">Note</p><p>Nota simples</p></div>" in html)
+        assertTrue("<div class=\"md-alert md-alert-tip\"><p class=\"md-alert-title\">Tip</p><p>Dica direta</p></div>" in html)
+        assertTrue("<div class=\"md-alert md-alert-important\"><p class=\"md-alert-title\">Important</p><p>Aviso importante</p></div>" in html)
+        assertTrue("<div class=\"md-alert md-alert-warning\"><p class=\"md-alert-title\">Warning</p><p>Cuidado</p></div>" in html)
+        assertTrue("<div class=\"md-alert md-alert-caution\"><p class=\"md-alert-title\">Caution</p><p>Perigo</p></div>" in html)
+    }
+
+    @Test
+    fun `converte listas aninhadas, ordenadas e tarefas`() {
+        val md = """
+            - item 1
+              - subitem
+            - [ ] pendente
+            - [x] concluída
+
+            3. terceiro
+            4. quarto
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<ul>\n<li>item 1\n<ul>\n<li>subitem</li>\n</ul></li>" in html)
+        assertTrue("<li><input type=\"checkbox\" disabled /> pendente</li>" in html)
+        assertTrue("<li><input type=\"checkbox\" disabled checked /> concluída</li>" in html)
+        assertTrue("<ol start=\"3\">\n<li>terceiro</li>\n<li>quarto</li>\n</ol>" in html)
+    }
+
+    @Test
+    fun `converte blocos de código cercado e indentado com escape HTML`() {
+        val md = """
+            ```kotlin
+            val x = a < b && c > "d"
+            ```
+
+            ```
+            sem linguagem
+            ```
+
+                indentado <tag>
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue(
+            "<pre class=\"md-fences\"><code class=\"language-kotlin\">val x = a &lt; b &amp;&amp; c &gt; &quot;d&quot;</code></pre>" in html,
+        )
+        assertTrue("<pre class=\"md-fences\"><code>sem linguagem</code></pre>" in html)
+        assertTrue("<pre class=\"md-fences\"><code>indentado &lt;tag&gt;</code></pre>" in html)
+    }
+
+    @Test
+    fun `converte tabela GFM com alinhamento e formatação inline`() {
+        val md = """
+            | Esq | Cen | Dir | Padrão |
+            |:----|:---:|----:|--------|
+            | **a** | `b` | ==c== | d |
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue(
+            "<table>\n<thead>\n<tr>" +
+                "<th style=\"text-align: left\">Esq</th>" +
+                "<th style=\"text-align: center\">Cen</th>" +
+                "<th style=\"text-align: right\">Dir</th>" +
+                "<th>Padrão</th>" +
+                "</tr>\n</thead>\n<tbody>\n<tr>" +
+                "<td style=\"text-align: left\"><strong>a</strong></td>" +
+                "<td style=\"text-align: center\"><code>b</code></td>" +
+                "<td style=\"text-align: right\"><mark>c</mark></td>" +
+                "<td>d</td>" +
+                "</tr>\n</tbody>\n</table>" in html,
+        )
+    }
+
+    @Test
+    fun `converte formatação inline, wikilinks, tags, imagens e protege código e pontuação`() {
+        val md = """
+            Texto **bold**, *em*, ~~del~~, `code <x>`, ==mark==, [site](https://a.com?x=1&y=2), <https://auto.org>, ![foto "1"](img.png), [[nota|apelido]], #tag/sub e a (b) c 2*3=6.
+
+            `==fora== #naotag [[naowiki]]` e `==a` ==dentro==
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<strong>bold</strong>" in html)
+        assertTrue("<em>em</em>" in html)
+        assertTrue("<del>del</del>" in html)
+        assertTrue("<code>code &lt;x&gt;</code>" in html)
+        assertTrue("<mark>mark</mark>" in html)
+        assertTrue("<a href=\"https://a.com?x=1&amp;y=2\">site</a>" in html)
+        assertTrue("<a href=\"https://auto.org\">https://auto.org</a>" in html)
+        assertTrue("<img src=\"img.png\" alt=\"foto &quot;1&quot;\" />" in html)
+        assertTrue("<a class=\"md-wikilink\" href=\"#nota\">apelido</a>" in html)
+        assertTrue("<span class=\"md-tag\">#tag/sub</span>" in html)
+        assertTrue("a (b) c 2*3=6." in html)
+        assertTrue("<code>==fora== #naotag [[naowiki]]</code>" in html)
+        assertTrue("<code>==a</code> <mark>dentro</mark>" in html)
+    }
+
+    @Test
+    fun `exporta documento de referência do Typora completo`() {
+        val ref = checkNotNull(javaClass.classLoader.getResourceAsStream("typora-ref.md"))
+            .bufferedReader()
+            .readText()
+        val html = exportToHtml(ref, title = "Ref")
+        assertTrue("<h1>Título nível 1</h1>" in html)
+        assertTrue("<blockquote><p>Citação em bloco.\nSegunda linha da citação.</p></blockquote>" in html)
+        assertTrue("<pre class=\"md-fences\"><code class=\"language-kotlin\">" in html)
+        assertTrue("<th style=\"text-align: center\">Coluna B</th>" in html)
+        assertTrue("<hr />" in html)
+        assertTrue("<pre class=\"md-fences\"><code>bloco de código indentado</code></pre>" in html)
+    }
+}
