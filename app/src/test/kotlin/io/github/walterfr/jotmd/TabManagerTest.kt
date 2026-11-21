@@ -124,7 +124,7 @@ class TabManagerTest {
     }
 
     @Test
-    fun `close na ultima aba cria nova aba Sem titulo vazia`() {
+    fun `close na ultima aba cria nova aba Sem Titulo vazia`() {
         val tm = TabManager(initialTitle = "a.md", initialText = "conteudo\n", initialKey = "k1")
         val originalId = tm.activeTabId
 
@@ -132,7 +132,7 @@ class TabManagerTest {
         assertEquals(1, tm.tabs.size)
         val blank = tm.activeTab
         assertNotEquals(originalId, blank.id)
-        assertEquals("Sem título", blank.title)
+        assertEquals("Sem Título", blank.title)
         assertNull(blank.key)
         assertNull(blank.session)
         assertEquals("", blank.editorState.text())
@@ -161,7 +161,7 @@ class TabManagerTest {
 
         assertEquals(2, tm.tabs.size)
         assertEquals(blank.id, tm.activeTabId)
-        assertEquals("Sem título", blank.title)
+        assertEquals("Sem Título", blank.title)
         assertNull(blank.key)
         assertEquals("", blank.editorState.text())
 

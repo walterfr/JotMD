@@ -19,7 +19,9 @@ fun exportToHtml(
     darkTheme: Boolean = false,
 ): String {
     val doc = parse(markdown)
-    val body = renderBlocks(doc.blocks)
+    val outline = outlineOf(doc)
+    val outlineByBlock = outline.associateBy { it.blockId }
+    val body = renderBlocks(doc.blocks, outline, outlineByBlock)
     return buildString {
         append("<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n")
         append("<title>").append(escapeHtml(title)).append("</title>\n")
@@ -33,12 +35,19 @@ fun exportToHtml(
     }
 }
 
-private fun renderBlocks(blocks: List<Block>): String =
-    blocks.mapNotNull { renderBlock(it) }.joinToString("\n")
+private fun renderBlocks(
+    blocks: List<Block>,
+    outline: List<OutlineEntry> = emptyList(),
+    outlineByBlock: Map<BlockId, OutlineEntry> = emptyMap(),
+): String = blocks.mapNotNull { renderBlock(it, outline, outlineByBlock) }.joinToString("\n")
 
-private fun renderBlock(block: Block): String? = when (block.type) {
+private fun renderBlock(
+    block: Block,
+    outline: List<OutlineEntry>,
+    outlineByBlock: Map<BlockId, OutlineEntry>,
+): String? = when (block.type) {
     BlockType.FRONT_MATTER -> renderFrontMatter(block.source)
-    BlockType.HEADING -> renderHeading(block.source)
+    BlockType.HEADING -> renderHeading(block.source, outlineByBlock[block.id]?.slug)
     BlockType.BLOCKQUOTE -> renderBlockquote(block.source)
     BlockType.UNORDERED_LIST, BlockType.ORDERED_LIST -> renderList(block.source)
     BlockType.CODE_FENCE -> renderCodeFence(block.source)
@@ -46,7 +55,21 @@ private fun renderBlock(block: Block): String? = when (block.type) {
     BlockType.TABLE -> renderTable(block.source)
     BlockType.HORIZONTAL_RULE -> "<hr />"
     BlockType.LINK_DEFINITION -> null
-    BlockType.PARAGRAPH, BlockType.OTHER, BlockType.HTML -> "<p>${renderInline(block.source)}</p>"
+    BlockType.PARAGRAPH ->
+        if (isTocMarker(block.source)) renderToc(outline) else "<p>${renderInline(block.source)}</p>"
+    BlockType.OTHER, BlockType.HTML -> "<p>${renderInline(block.source)}</p>"
+}
+
+private fun renderToc(outline: List<OutlineEntry>): String = buildString {
+    append("<div class=\"md-toc\" role=\"navigation\"><p class=\"md-toc-content\">")
+    if (outline.isNotEmpty()) append('\n')
+    for (entry in outline) {
+        append("<span class=\"md-toc-item md-toc-h").append(entry.level).append("\">")
+        append("<a class=\"md-toc-inner\" href=\"#").append(escapeHtml(entry.slug)).append("\">")
+        append(escapeHtml(entry.title))
+        append("</a></span>\n")
+    }
+    append("</p></div>")
 }
 
 private fun renderFrontMatter(source: String): String {
@@ -54,7 +77,7 @@ private fun renderFrontMatter(source: String): String {
     return "<pre class=\"md-meta-block\">${escapeHtml(yaml)}</pre>"
 }
 
-private fun renderHeading(source: String): String {
+private fun renderHeading(source: String, slug: String?): String {
     val root = astOf(source)
     val node = root.children.firstOrNull { it.type in HEADING_TYPES }
     val level = when (node?.type) {
@@ -73,7 +96,8 @@ private fun renderHeading(source: String): String {
     val html = buildString {
         appendChildren(contentNode, InlineCtx.of(source, root), emptySet())
     }.trimEnd()
-    return "<h$level>$html</h$level>"
+    val idAttr = if (slug != null) " id=\"${escapeHtml(slug)}\"" else ""
+    return "<h$level$idAttr>$html</h$level>"
 }
 
 private fun fallbackHeadingLevel(source: String): Int {
@@ -298,6 +322,7 @@ private data class HtmlSpecial(
 )
 
 private val HIGHLIGHT_REGEX = Regex("""==(?![=\s])([^\r\n]*?)(?<![=\s])==(?!=)""")
+private val UNDERLINE_REGEX = Regex("""<u>([^\r\n]+?)</u>""", RegexOption.IGNORE_CASE)
 
 private class InlineCtx private constructor(
     val src: String,
@@ -330,9 +355,14 @@ private class InlineCtx private constructor(
                 )
             }
             val masked = maskRanges(src, skips)
-            val marks = findHighlights(src, masked, nodeBounds)
+            val marks = findRegexSpecials(src, masked, nodeBounds, HIGHLIGHT_REGEX, 2) { inner ->
+                "<mark>${renderInline(inner)}</mark>"
+            }
+            val underlines = findRegexSpecials(src, masked, nodeBounds, UNDERLINE_REGEX, 3) { inner ->
+                "<u>${renderInline(inner)}</u>"
+            }
 
-            val sorted = (wikis + tags + marks).sortedBy { it.range.first }
+            val sorted = (wikis + tags + marks + underlines).sortedBy { it.range.first }
             val kept = ArrayList<HtmlSpecial>()
             for (s in sorted) {
                 if (kept.isEmpty() || s.range.first > kept.last().range.last) kept += s
@@ -368,22 +398,26 @@ private class InlineCtx private constructor(
             return String(chars)
         }
 
-        private fun findHighlights(
+        private inline fun findRegexSpecials(
             src: String,
             masked: String,
             nodeBounds: List<IntRange>,
+            regex: Regex,
+            retryAdvance: Int,
+            render: (String) -> String,
         ): List<HtmlSpecial> {
             val out = ArrayList<HtmlSpecial>()
             var pos = 0
             while (pos < masked.length) {
-                val m = HIGHLIGHT_REGEX.find(masked, pos) ?: break
+                val m = regex.find(masked, pos) ?: break
                 val start = m.range.first
                 if ((start > 0 && src[start - 1] == '\\') || crossesAnyBoundary(m.range, nodeBounds)) {
-                    pos = start + 2
+                    pos = start + retryAdvance
                     continue
                 }
-                val inner = src.substring(start + 2, m.range.last - 1)
-                out += HtmlSpecial(m.range, "<mark>${renderInline(inner)}</mark>")
+                val innerRange = m.groups[1]!!.range
+                val inner = src.substring(innerRange.first, innerRange.last + 1)
+                out += HtmlSpecial(m.range, render(inner))
                 pos = m.range.last + 1
             }
             return out
@@ -684,6 +718,16 @@ private fun buildCss(darkTheme: Boolean): String {
         input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }
         img { max-width: 100%; height: auto; }
         .md-tag { color: $link; }
+        .md-toc { margin: 1em 0; padding: 0.4em 0; }
+        .md-toc-content { margin: 0; font-size: 0.95em; }
+        .md-toc-item { display: block; margin: 0.2em 0; }
+        .md-toc-inner { display: inline-block; }
+        .md-toc-h1 { margin-left: 0; font-weight: bold; }
+        .md-toc-h2 { margin-left: 1.2em; }
+        .md-toc-h3 { margin-left: 2.4em; }
+        .md-toc-h4 { margin-left: 3.6em; }
+        .md-toc-h5 { margin-left: 4.8em; }
+        .md-toc-h6 { margin-left: 6em; }
         .md-alert { padding: 0 1em; margin: 0.8em 0; border-left: 0.25em solid $quoteBorder; }
         .md-alert-title { font-weight: bold; margin-bottom: 0.4em; }
         .md-alert-note { border-left-color: $noteColor; }

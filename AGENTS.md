@@ -33,12 +33,14 @@ Ordem de leitura:
 - **Busca:** FTS4 no SQLite nativo (`SQLiteOpenHelper`), não Room.
   Diverge do `AI_CONTEXT.md`, de propósito: uma tabela não justifica a
   dependência.
-- **Inspeção com `morluto/rea` liberada:** usar o `rea` (MCP e CLI) para
-  inspecionar o Typora instalado (`C:\Program Files\Typora\resources`:
-  CSS/temas, HTML, JS/Electron, `app.asar`, `appsrc/`, `page-dist/`) e
-  APKs Android de referência, extraindo regras de comportamento, tokens
-  visuais e fluxos de UI/UX para reimplementar do zero em Kotlin/Compose
-  no JotMD.
+- **Inspeção com `morluto/rea` e `storytold/craft-anything` liberada:** usar o
+  `rea` (MCP/CLI) e o `craft-anything` (`craft-anything-cli v0.6.1`, `--deep`,
+  MCP registrado no Antigravity) para inspecionar o Typora instalado
+  (`C:\Program Files\Typora`: executável, fuses, addons `.node`,
+  `resources\locales\`, CSS/temas, HTML, JS/Electron, `app.asar`,
+  `node_modules.asar`, `lib.asar`, `appsrc/`, `page-dist/`) e APKs Android de
+  referência, extraindo regras de comportamento, tokens visuais e fluxos de
+  UI/UX para reimplementar do zero em Kotlin/Compose no JotMD.
 - **App Windows em Compose Desktop (`:desktop`):** o app desktop Windows
   usa Kotlin/JVM + Compose Multiplatform Desktop compartilhando `:core-md` e
   os fontes comuns de `:editor` (`editor/src/main/kotlin`), isolando apenas
@@ -61,10 +63,10 @@ minSdk 26, Compose BOM 2025.06.01, `org.jetbrains:markdown` 0.7.3. Versões em
 
 | Módulo | Conteúdo |
 |---|---|
-| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocSearch` (`findInDocument`, `replaceAllInText`), `HtmlExport` (`exportToHtml`), `PdfExport` (`exportToPdf`). |
-| `:editor` | Compose. `EditorState` (estado e operações), `BlockEditor` (foco + teclas), `BlockRenderer`/`BlockParts`/`InlineText` (renderização, GitHub Alerts e `==highlight==`), `Toolbar`, `ImagePreview`, `MdTheme` (tema claro/escuro via `MdTokens.isDark` / `MdPalette`), modo código-fonte (`isSourceMode`). Operações puras em `editor/ops/`: `BlockOps` (`splitAt`, `mergeWithPrevious`, `reparse`), `UndoStack`, `TaskOps`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`. |
-| `:app` | Shell Android. `MainActivity` (gaveta, multi-abas, tema escuro, busca na pasta e na nota, export HTML/PDF via SAF, links), `TabManager`, `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
-| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, árvore `.md`, busca full-text na pasta e na nota, tema escuro, export HTML/PDF, wikilinks/tags, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
+| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocOutline` (`outlineOf`, `isTocMarker`), `DocStats` (`docStatsOf`, `TYPORA_WPM`), `DocSearch` (`findInDocument`, `replaceAllInText`, `replaceRangeInText`), `HtmlExport` (`exportToHtml`), `PdfExport` (`exportToPdf`). |
+| `:editor` | Compose. `EditorState` (estado, modo foco/máquina e tabela), `BlockEditor` (foco, gutter de código-fonte + teclas), `BlockRenderer`/`BlockParts`/`InlineText` (renderização, GitHub Alerts, `==highlight==`, `<u>`, widget `[TOC]` e controles de tabela), `Toolbar`, `ImagePreview`, `MdTheme` (5 presets: `github`, `newsprint`, `pixyll`, `whitey`, `night` via `MdTokens.themePreset` / `MdTokens.isDark`), modo código-fonte (`isSourceMode`), coluna centralizada (`860.dp`/`800.dp`). Operações puras em `editor/ops/`: `BlockOps` (`splitAt`, `mergeWithPrevious`, `reparse`), `UndoStack`, `TaskOps`, `TableOps`, `SourceGutter`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`. |
+| `:app` | Shell Android. `MainActivity` (gaveta com abas `Arquivos`/`Índices` e Contagem de Palavras, multi-abas, 5 temas, `</>`/`Foco`, busca na pasta e na nota com `Aa`/`[ab]`/substituição unitária, export HTML/PDF via SAF, links), `TabManager`, `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
+| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, árvore `.md` com `DirectoryTreeWatcher`, Quick Open `Ctrl+P`, aba `Índices`, rodapé `30.dp` com Contagem de Palavras/`</>`/`Foco`/`Máquina`, busca full-text na pasta e na nota com `Aa`/`[ab]`/`Substituir`, 5 temas, export HTML/PDF, wikilinks/tags, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
 
 ## Estado (2026-11-20)
 
@@ -94,9 +96,15 @@ Implementado em código e testado em JVM neste ciclo:
   substituição na nota (`DocSearch.kt`), exportação HTML (`HtmlExport.kt`),
   exportação PDF 1.4 nativa (`PdfExport.kt` em `:core-md`, plugado via SAF
   em `:app` e diálogo em `:desktop`), otimização de split local e `contentType`
-  em `LazyColumn` para documentos de 5k+ linhas, e metadados/receita F-Droid
+  em `LazyColumn` para documentos de 5k+ linhas, metadados/receita F-Droid
   (`dependenciesInfo` desligado em `app/build.gradle.kts`, Fastlane `pt-BR`/
-  `en-US` em `fastlane/metadata/android/`, `fdroid/io.github.walterfr.jotmd.yml`).
+  `en-US` em `fastlane/metadata/android/`, `fdroid/io.github.walterfr.jotmd.yml`),
+  e bloco de paridade Typora pós-investigação `craft-anything` (`DocOutline`/`[TOC]`,
+  `DocStats` `382 WPM`/CJK, `<u>`, `HtmlExport` com TOC e âncoras, 5 temas
+  `GitHub`/`Newsprint`/`Pixyll`/`Whitey`/`Night`, Focus/Typewriter Mode, coluna
+  `860dp`/`800dp`, `SourceGutter`, `TableOps`, padronização `"Sem Título"`,
+  `Aa`/`[ab]`/substituição unitária, gaveta/sidebar `"Índices"` + Contagem de
+  Palavras, rodapé `30dp`, `DirectoryTreeWatcher` e Quick Open `Ctrl+P` no Desktop).
 
 Verificado em tablet Android (`TB361FU - 16`, Android 16 via `adb`):
 
@@ -176,11 +184,17 @@ Pendente:
 - **O dono também commita em paralelo.** Sempre `git fetch` antes de
   `git push`; se divergiu, `git pull --rebase`, rebuild, testes, push.
 - Comportamento novo "como o Typora" deve ser observado ou inspecionado via
-  `rea` no Typora antes e registrado no `DESIGN.md`.
+  `rea` ou `craft-anything` (`--deep`) no Typora antes e registrado no
+  `DESIGN.md`.
 - **Execução em paralelo com múltiplos subagentes:** tarefas ou features
   independentes devem ser sempre paralelizadas usando múltiplos subagentes
   (`invoke_subagent`) com conjuntos disjuntos de arquivos, consolidando o
   build/testes na thread principal.
+- **Releases automáticas (GitHub Actions):** tags `v*` disparam
+  `.github/workflows/release.yml` (`.apk` Android, `.msi`/`.exe`/`.zip` portátil
+  Windows e `SHA256SUMS.txt`). `app/build.gradle.kts` só ativa `signingConfig`
+  quando `KEYSTORE_PATH`/`USE_DEBUG_SIGNING` existem no ambiente, mantendo o
+  build do F-Droid intacto.
 
 ## Teste em aparelho (tablet Android via adb wireless)
 

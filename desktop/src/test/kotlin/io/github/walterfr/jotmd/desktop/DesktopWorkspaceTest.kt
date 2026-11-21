@@ -7,6 +7,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -132,8 +134,20 @@ class DesktopWorkspaceTest {
         assertEquals(1, manager.tabs.size)
         val fresh = assertNotNull(manager.activeTab)
         assertNotEquals(tab.id, fresh.id)
+        assertEquals("Sem Título", fresh.title)
         assertNull(fresh.file)
         assertEquals("", fresh.editorState.text())
+    }
+
+    @Test
+    fun `DesktopTabManager newEmptyTab usa titulo Sem Titulo`() {
+        val manager = DesktopTabManager()
+        val blank = manager.newEmptyTab()
+
+        assertEquals("Sem Título", blank.title)
+        assertNull(blank.file)
+        assertEquals("", blank.editorState.text())
+        assertEquals(blank.id, manager.activeTabId)
     }
 
     @Test
@@ -188,5 +202,44 @@ class DesktopWorkspaceTest {
 
         assertNotNull(resolveLocalImageFile(img.toString()))
         assertNotNull(resolveLocalImageFile(img.toUri().toString()))
+    }
+
+    @Test
+    fun `filterQuickOpen dobra acentos, evita duplicar aba aberta, inclui rascunhos e prioriza titulo`(@TempDir root: Path) {
+        Files.createDirectories(root.resolve("sub_acao"))
+        Files.writeString(root.resolve("Ação.md"), "# Ação\n", StandardCharsets.UTF_8)
+        Files.writeString(root.resolve("sub_acao/outro.md"), "# Outro\n", StandardCharsets.UTF_8)
+        Files.writeString(root.resolve("plano.md"), "# Plano\n", StandardCharsets.UTF_8)
+
+        val entries = listDesktopTree(root)
+        val manager = DesktopTabManager()
+        val openAcao = assertNotNull(manager.openOrFocus(root.resolve("Ação.md")))
+        val blank = manager.newEmptyTab()
+
+        val all = filterQuickOpen("", entries, manager.tabs)
+        assertEquals(4, all.size)
+        val acaoItems = all.filter { it.title == "Ação.md" }
+        assertEquals(1, acaoItems.size)
+        assertEquals(openAcao.id, acaoItems.single().tabId)
+        assertTrue(all.any { it.tabId == blank.id && it.path == null && it.title == "Sem Título" })
+
+        val acaoHits = filterQuickOpen("acao", entries, manager.tabs)
+        assertEquals(listOf("Ação.md", "outro.md"), acaoHits.map { it.title })
+
+        val blankHits = filterQuickOpen("sem", entries, manager.tabs)
+        assertEquals(listOf("Sem Título"), blankHits.map { it.title })
+
+        assertEquals(2, filterQuickOpen("", entries, manager.tabs, limit = 2).size)
+    }
+
+    @Test
+    fun `DirectoryTreeWatcher detecta criacao de novo arquivo markdown`(@TempDir root: Path) {
+        val latch = CountDownLatch(1)
+        DirectoryTreeWatcher(root) { latch.countDown() }.use {
+            Files.writeString(root.resolve("ignorado.txt"), "txt", StandardCharsets.UTF_8)
+            Files.writeString(root.resolve(".oculto.md"), "oculto", StandardCharsets.UTF_8)
+            Files.writeString(root.resolve("novo.md"), "# Novo\n", StandardCharsets.UTF_8)
+            assertTrue(latch.await(5, TimeUnit.SECONDS), "DirectoryTreeWatcher deveria notificar criação de .md")
+        }
     }
 }

@@ -9,18 +9,27 @@ import io.github.walterfr.jotmd.core.Block
 import io.github.walterfr.jotmd.core.BlockId
 import io.github.walterfr.jotmd.core.BlockIdSource
 import io.github.walterfr.jotmd.core.BlockType
+import io.github.walterfr.jotmd.core.DocMatch
 import io.github.walterfr.jotmd.core.DocState
 import io.github.walterfr.jotmd.core.parse
 import io.github.walterfr.jotmd.core.replaceAllInText
+import io.github.walterfr.jotmd.core.replaceRangeInText
 import io.github.walterfr.jotmd.core.serialize
 import io.github.walterfr.jotmd.editor.ops.SmartBackspace
 import io.github.walterfr.jotmd.editor.ops.SmartDelete
 import io.github.walterfr.jotmd.editor.ops.SmartEnter
 import io.github.walterfr.jotmd.editor.ops.UndoFrame
 import io.github.walterfr.jotmd.editor.ops.UndoStack
+import io.github.walterfr.jotmd.editor.ops.activeLine1Based
+import io.github.walterfr.jotmd.editor.ops.addTableColumn
+import io.github.walterfr.jotmd.editor.ops.addTableRow
 import io.github.walterfr.jotmd.editor.ops.applySmartPair
+import io.github.walterfr.jotmd.editor.ops.cycleTableColumnAlignment
 import io.github.walterfr.jotmd.editor.ops.isFrontMatterTrigger
 import io.github.walterfr.jotmd.editor.ops.mergeWithPrevious
+import io.github.walterfr.jotmd.editor.ops.moveTableRow
+import io.github.walterfr.jotmd.editor.ops.removeTableColumn
+import io.github.walterfr.jotmd.editor.ops.removeTableRow
 import io.github.walterfr.jotmd.editor.ops.reparse
 import io.github.walterfr.jotmd.editor.ops.smartBackspace
 import io.github.walterfr.jotmd.editor.ops.smartDeleteAtEnd
@@ -54,6 +63,14 @@ class EditorState(initialText: String = "") {
 
     var autoPairEnabled: Boolean = true
     var isSourceMode: Boolean by mutableStateOf(false)
+    var isFocusMode: Boolean by mutableStateOf(false)
+        private set
+    var isTypewriterMode: Boolean by mutableStateOf(false)
+        private set
+    var scrollRequestNonce: Int by mutableStateOf(0)
+        private set
+    var scrollRequestBlockIndex: Int? = null
+        private set
 
     var doc: DocState by mutableStateOf(parse(initialText, ids))
         private set
@@ -66,6 +83,14 @@ class EditorState(initialText: String = "") {
         isSourceMode = !isSourceMode
     }
 
+    fun toggleFocusMode() {
+        isFocusMode = !isFocusMode
+    }
+
+    fun toggleTypewriterMode() {
+        isTypewriterMode = !isTypewriterMode
+    }
+
     /** Documento inteiro como texto, byte a byte — o que vai pro arquivo ao gravar. */
     fun text(): String = serialize(doc)
 
@@ -74,6 +99,7 @@ class EditorState(initialText: String = "") {
         doc = parse(text, ids)
         focusedId = null
         editValue = TextFieldValue("")
+        scrollRequestBlockIndex = null
         undo.clear()
         clearStaleEcho()
     }
@@ -429,6 +455,46 @@ class EditorState(initialText: String = "") {
         editValue = TextFieldValue(block.source, TextRange(start, end))
     }
 
+    /** Foca o bloco [blockIndex] no início e solicita rolagem na viewport (Outline / `[TOC]`). */
+    fun focusBlockIndex(blockIndex: Int) {
+        val block = doc.blocks.getOrNull(blockIndex) ?: return
+        focusedId = block.id
+        editValue = TextFieldValue(block.source, TextRange(0))
+        clearStaleEcho()
+        scrollRequestBlockIndex = blockIndex
+        scrollRequestNonce++
+    }
+
+    /**
+     * Substitui uma única ocorrência [match] por [replacement], preservando
+     * `FRONT_MATTER` e `CODE_FENCE` e gravando um checkpoint próprio de undo.
+     */
+    fun replaceMatch(match: DocMatch, replacement: String): Boolean {
+        val block = doc.blocks.getOrNull(match.blockIndex) ?: return false
+        if (block.id != match.blockId) return false
+        val start = match.rangeInBlock.first
+        val endExclusive = match.rangeInBlock.last + 1
+        if (start < 0 || endExclusive < start || endExclusive > block.source.length) return false
+
+        recordUndoCheckpoint(force = true)
+        val updatedSource = replaceRangeInText(block.source, match.rangeInBlock, replacement)
+        val newType = if (block.type == BlockType.FRONT_MATTER || block.type == BlockType.CODE_FENCE) {
+            block.type
+        } else {
+            parse(updatedSource, frontMatter = false).blocks.firstOrNull()?.type ?: block.type
+        }
+        doc = doc.copy(
+            blocks = doc.blocks.mapIndexed { i, b ->
+                if (i == match.blockIndex) b.copy(type = newType, source = updatedSource) else b
+            },
+        )
+        val cursor = (start + replacement.length).coerceIn(0, updatedSource.length)
+        focusedId = block.id
+        editValue = TextFieldValue(updatedSource, TextRange(cursor))
+        clearStaleEcho()
+        return true
+    }
+
     /**
      * Substitui todas as ocorrências na nota inteira em um único passo de undo
      * (como `replaceAll` do `SearchPanel` no Typora), mantendo a fonte de IDs.
@@ -464,6 +530,51 @@ class EditorState(initialText: String = "") {
         if (toggled == block.source) return
         recordUndoCheckpoint()
         doc = doc.copy(blocks = doc.blocks.map { if (it.id == blockId) it.copy(source = toggled) else it })
+    }
+
+    fun tableAddRow(blockId: BlockId, afterRowIndex: Int? = null): Boolean =
+        applyTableEdit(blockId) { addTableRow(it, afterRowIndex) }
+
+    fun tableRemoveRow(blockId: BlockId, rowIndex: Int? = null): Boolean =
+        applyTableEdit(blockId) { removeTableRow(it, rowIndex) }
+
+    fun tableAddColumn(blockId: BlockId, afterColIndex: Int? = null): Boolean =
+        applyTableEdit(blockId) { addTableColumn(it, afterColIndex) }
+
+    fun tableRemoveColumn(blockId: BlockId, colIndex: Int? = null): Boolean =
+        applyTableEdit(blockId) { removeTableColumn(it, colIndex) }
+
+    fun tableMoveRow(blockId: BlockId, delta: Int): Boolean = applyTableEdit(blockId) { source ->
+        val table = tableOf(source) ?: return@applyTableEdit null
+        if (table.rows.size <= 1) return@applyTableEdit null
+        val rowIndex = if (focusedId == blockId) {
+            val lineIndex = activeLine1Based(editValue.text, editValue.selection.start) - 1
+            if (lineIndex >= 2) (lineIndex - 2).coerceAtMost(table.rows.lastIndex) else 0
+        } else {
+            0
+        }
+        moveTableRow(source, rowIndex, delta)
+    }
+
+    fun tableCycleAlignment(blockId: BlockId, colIndex: Int = 0): Boolean =
+        applyTableEdit(blockId) { cycleTableColumnAlignment(it, colIndex) }
+
+    private fun applyTableEdit(blockId: BlockId, transform: (String) -> String?): Boolean {
+        val index = doc.blocks.indexOfFirst { it.id == blockId }
+        if (index < 0) return false
+        val block = doc.blocks[index]
+        val updated = transform(block.source) ?: return false
+        recordUndoCheckpoint()
+        doc = doc.copy(
+            blocks = doc.blocks.mapIndexed { i, b -> if (i == index) b.copy(source = updated) else b },
+        )
+        if (focusedId == blockId) {
+            val start = editValue.selection.start.coerceIn(0, updated.length)
+            val end = editValue.selection.end.coerceIn(start, updated.length)
+            editValue = TextFieldValue(updated, TextRange(start, end))
+            clearStaleEcho()
+        }
+        return true
     }
 
     /** `↑` na borda de cima: pula pro bloco anterior, cursor no fim. No-op no primeiro bloco. */

@@ -3,6 +3,7 @@ package io.github.walterfr.jotmd.editor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import io.github.walterfr.jotmd.core.BlockType
+import io.github.walterfr.jotmd.core.findInDocument
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -626,5 +627,87 @@ class EditorStateTest {
         val cur2 = s.editValue.text
         s.edit(TextFieldValue(cur2.dropLast(1), TextRange(cur2.length - 1)))
         assertEquals("- [x] um\n", s.editValue.text)
+    }
+
+    @Test
+    fun `modos foco e typewriter alternam e focusBlockIndex dispara rolagem`() {
+        val s = EditorState("# Um\n\nParágrafo\n\n## Dois\n")
+        assertFalse(s.isFocusMode)
+        assertFalse(s.isTypewriterMode)
+
+        s.toggleFocusMode()
+        s.toggleTypewriterMode()
+        assertTrue(s.isFocusMode)
+        assertTrue(s.isTypewriterMode)
+
+        s.focusBlockIndex(2)
+        assertEquals(s.doc.blocks[2].id, s.focusedId)
+        assertEquals(TextRange(0), s.editValue.selection)
+        assertEquals(2, s.scrollRequestBlockIndex)
+        assertEquals(1, s.scrollRequestNonce)
+
+        s.focusBlockIndex(99)
+        assertEquals(1, s.scrollRequestNonce)
+    }
+
+    @Test
+    fun `replaceMatch substitui ocorrência unitária, preserva front matter e registra undo`() {
+        val s = EditorState("---\ntitle: alfa\n---\n\num alfa dois\n")
+        val matches = findInDocument(s.doc, "alfa")
+        assertEquals(2, matches.size)
+
+        assertTrue(s.replaceMatch(matches[0], "beta"))
+        assertEquals(BlockType.FRONT_MATTER, s.doc.blocks[0].type)
+        assertEquals("---\ntitle: beta\n---\n\num alfa dois\n", s.text())
+        assertEquals(s.doc.blocks[0].id, s.focusedId)
+        assertEquals(TextRange(15), s.editValue.selection)
+
+        s.undo()
+        assertEquals("---\ntitle: alfa\n---\n\num alfa dois\n", s.text())
+
+        // Match com id desatualizado ou faixa inválida retorna false sem alterar o doc.
+        assertFalse(s.replaceMatch(matches[0].copy(blockId = s.doc.blocks[1].id), "x"))
+        assertFalse(s.replaceMatch(matches[1].copy(rangeInBlock = 0..999), "x"))
+    }
+
+    @Test
+    fun `operações de tabela no EditorState atualizam bloco, editValue e undo`() {
+        val table = "| Nome | Val |\n| ---- | --- |\n| A    | 1   |\n| B    | 2   |\n"
+        val s = EditorState("texto\n\n$table")
+        val textId = s.doc.blocks[0].id
+        val tableBlock = s.doc.blocks[1]
+
+        assertFalse(s.tableAddRow(textId))
+
+        s.focus(tableBlock)
+        assertTrue(s.tableAddRow(tableBlock.id))
+        assertEquals(3, tableOf(s.doc.blocks[1].source)?.rows?.size)
+        assertEquals(s.doc.blocks[1].source, s.editValue.text)
+
+        Thread.sleep(600)
+        assertTrue(s.tableAddColumn(tableBlock.id))
+        assertEquals(3, tableOf(s.doc.blocks[1].source)?.headers?.size)
+
+        Thread.sleep(600)
+        assertTrue(s.tableCycleAlignment(tableBlock.id, 0))
+        assertEquals(TableAlignment.LEFT, tableOf(s.doc.blocks[1].source)?.alignments?.get(0))
+
+        // Cursor na linha de dados 1 (linha física 3 -> 0-based 3 - 2 = 1) move para cima
+        val line3Offset = s.editValue.text.lines().take(3).sumOf { it.length + 1 }
+        s.edit(TextFieldValue(s.editValue.text, TextRange(line3Offset)))
+        Thread.sleep(600)
+        assertTrue(s.tableMoveRow(tableBlock.id, -1))
+        assertEquals("B", tableOf(s.doc.blocks[1].source)?.rows?.get(0)?.get(0))
+
+        Thread.sleep(600)
+        assertTrue(s.tableRemoveRow(tableBlock.id))
+        assertEquals(2, tableOf(s.doc.blocks[1].source)?.rows?.size)
+
+        Thread.sleep(600)
+        assertTrue(s.tableRemoveColumn(tableBlock.id))
+        assertEquals(2, tableOf(s.doc.blocks[1].source)?.headers?.size)
+
+        s.undo()
+        assertEquals(3, tableOf(s.doc.blocks[1].source)?.headers?.size)
     }
 }

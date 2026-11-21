@@ -75,6 +75,7 @@ internal class Special(
 )
 
 private val HIGHLIGHT_REGEX = Regex("""==(?=\S)([^=\r\n]*?\S)==""")
+private val UNDERLINE_REGEX = Regex("""<u>([^\r\n]+?)</u>""", RegexOption.IGNORE_CASE)
 
 private val SKIP_TYPES: Set<IElementType> = setOf(
     MarkdownElementTypes.CODE_SPAN,
@@ -111,19 +112,32 @@ internal class Ctx private constructor(val src: String, val specials: List<Speci
                 background = MdTokens.highlightBackground,
                 color = MdTokens.highlightText,
             )
-            val highlights = HIGHLIGHT_REGEX.findAll(src).mapNotNull { m ->
-                if (skipRanges.any { r -> m.range.first <= r.last && r.first <= m.range.last }) {
-                    null
-                } else {
-                    Special(m.range, m.groupValues[1], style = highlightStyle)
-                }
-            }.toList()
+            val highlights = regexSpecials(src, HIGHLIGHT_REGEX, skipRanges, highlightStyle)
+            val underlines = regexSpecials(
+                src,
+                UNDERLINE_REGEX,
+                skipRanges,
+                SpanStyle(textDecoration = TextDecoration.Underline),
+            )
             // `[[#topo]]` também casa como tag; o que começa antes vence.
-            val sorted = (wikis + tags + highlights).sortedBy { it.range.first }
+            val sorted = (wikis + tags + highlights + underlines).sortedBy { it.range.first }
             val kept = ArrayList<Special>()
             for (s in sorted) if (kept.isEmpty() || s.range.first > kept.last().range.last) kept += s
             return Ctx(src, kept)
         }
+
+        private fun regexSpecials(
+            src: String,
+            regex: Regex,
+            skipRanges: List<IntRange>,
+            style: SpanStyle,
+        ): List<Special> = regex.findAll(src).mapNotNull { m ->
+            if (skipRanges.any { r -> m.range.first <= r.last && r.first <= m.range.last }) {
+                null
+            } else {
+                Special(m.range, m.groupValues[1], style = style)
+            }
+        }.toList()
 
         private fun collectSkipRanges(node: ASTNode, out: MutableList<IntRange>) {
             if (node.type in SKIP_TYPES) {

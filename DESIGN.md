@@ -226,3 +226,57 @@ Definido em `style/base.css` (borda esquerda `0.25em solid`, `padding: 0 1em`) c
 | `caution` | `#cf222e` | `#cf222e` *(herda de `base.css`)* |
 
 Implementado no JotMD em `:core-md` (`Alerts.kt`, `alertOf`) e `editor/BlockRenderer.kt`.
+
+---
+
+## Inspeção Profunda via `storytold/craft-anything` (`v0.6.1`, modo `--deep`) — Typora `1.13.7`
+
+### 1. Binários nativos, Electron Fuses e `.asar`
+
+- **Executável (`Typora.exe`):** `201,489,536 B` (SHA-256 `b651d55fbac7bc53a20cfe9352d90cb839bb7b8e5f9d8e64da010edbca8a8196`), PE32+ x86_64 GUI sem símbolos, com `nx`, `pie`, `high_entropy_va` e `cfg`. Electron `35.6.0` (arquivo `version`), Typora `1.13.7`, `releaseId: cf170905`, `family: abnerworks`. O recurso PE `INTEGRITY/ELECTRONASAR` guarda o SHA-256 `fe9b0c1ef4e995df5d4e094fe0df9524fdcfed90ff6bc315d6c4353d7fc2f447` que corresponde ao cabeçalho JSON de `app.asar`.
+- **Electron Fuses (`0x9d00420`, v1 — 3/7 hardening habilitados):**
+  - Habilitados: `RunAsNode=disabled`, `EnableNodeCliInspectArguments=disabled`, `OnlyLoadAppFromAsar=enabled`.
+  - Desabilitados: `EnableCookieEncryption=disabled`, `EnableNodeOptionsEnvironmentVariable=enabled`, `EnableEmbeddedAsarIntegrityValidation=disabled`, `GrantFileProtocolExtraPrivileges=enabled`.
+- **Desmistificação de `main.node` (`1,055,872 B`, SHA-256 `82e288468b71bd6fe3e167afd05afe3b550e9fb7fcf643ffe6cbc52e2d73c0e2`):**
+  - **Não** contém decriptação de `.jsc` nem lógica de licenciamento. É um addon nativo C/C++ MSVC (`linker_version: 14.16`, `is_rust: false`; caminho PDB `C:\Users\leech\Workspace\TypeMark64\launch\build\Release\main.pdb`) que exporta apenas N-API v8 (`napi_register_module_v1`, `node_api_module_get_api_version_v1`).
+  - Importa `KERNEL32.dll` (91), `SHELL32.dll` (`SHOpenWithDialog`, `#178`), `ole32.dll` (`CoInitializeEx`, `CoCreateInstance`, `CoTaskMemFree`, `CoUninitialize`) e `node.exe` (40 delay-loaded).
+  - `sub_180009a70` verifica `global.navigator` antes de expor bindings ao renderer: `Spellchecker` (`isHunspell`, `isMisspelled`, `setDictionary`, `add`, `remove`, `getAvailableDictionaries`, `getCorrectionsForMisspelling` — usando COM `SpellCheckerFactory` do Windows GUIDs `7ab36653-1796-484b-bdfa-e74f1db7c1dc` / `8e018a9d-2415-4677-bf08-794ea61f94bb`, com fallback Hunspell embutido) e helpers Win32 Shell (`openAs`, `openProperties`).
+- **Demais módulos nativos e utilitários:**
+  - `fswin.node` (`v3.18.918`, `564,736 B`, exporta `version`, `getAttributes[Sync]`, `setAttributes[Sync]`), `cld.node` (`v2.10.1`, `2,906,752 B`, detecção de idioma Google CLD2), `reg.node` (`native-reg v0.3.6`, `615,424 B`), `spellchecker` (`v4.0.0`, delega para `main.node` + `cld`) e `vscode-ripgrep` (`v1.13.2`, binário Rust/MSVC `rg.exe 13.0.0`, `4,731,520 B`).
+- **Pacotes `.asar`:**
+  - `app.asar` (`382,346 B`, 3 arquivos: `package.json`, `launch.dist.js` estilo Bytenode e `atom.compiled.dist.jsc` de `379,912 B` com divergência de SHA-256 no cabeçalho ASAR tolerada porque `EnableEmbeddedAsarIntegrityValidation=disabled`).
+  - `node_modules.asar` (`9,969,978 B`, 2.943 arquivos, 22 pacotes: `adm-zip 0.5.10`, `chokidar 3.5.3`, `cld 2.10.1`, `electron-dl 1.12.0`, `electron-fetch 1.9.1`, `electron-progressbar 1.2.0`, `extract-zip 1.6.7`, `fs-extra 3.0.1`, `fs-plus 3.1.1`, `fswin 3.18.918`, `getos 3.2.1`, `graceful-fs 4.2.8`, `hjson 1.8.4`, `iconv-lite 0.6.3`, `jschardet 3.1.4`, `lowdb 1.0.0`, `native-reg 0.3.6`, `node-machine-id 1.1.12`, `raven 2.6.4`, `spellchecker 4.0.0`, `sudo-prompt 9.2.1`, `vscode-ripgrep 1.13.2`).
+  - `lib.asar` (`8,342,504 B`, 15 arquivos): MathJax `4.1.0` (`tex-svg-full.js` + `xypic.js`), CodeMirror `5.26.0` (core em `frame.js` `Mod 20` + 111 modos em `codemirror/mode.min.js`), Mermaid `11.13.0` + `mermaid-zenuml`, `diagram.min.js` (`lodash 4.14.1`, `Raphael 2.2.0`, `flowchart.js`, `js-sequence-diagrams 0.4.2`), `Jimp v0.3.2` + `image-worker.js`, `pdf-lib` + `pdf-designer.min.js`, `aws-sdk 2.663.0`, `Bootstrap v3.2.0`. `DOMPurify 2.0.7` vive dentro de `frame.js` (`Mod 16`). O Typora **não** usa `turndown` nem `marked` — utiliza parser próprio (`Mod 19`), serializer próprio (`Mod 12`), conversor HTML→Markdown próprio (`Mod 55`) e exportador HTML próprio (`Mod 17`).
+
+### 2. Configurações padrão (`conf.default.json` / `Mod 52`), DOM (`window.html`) e Webviews
+
+- **`conf.default.json`:** chaves `defaultFontFamily`, `autoHideMenuBar: false`, `searchService`, `keyBinding: {}`, `monocolorEmoji: false`, `maxFetchCountOnFileList: 500`, `flags: []`.
+- **`FileOption.DEFAULT_OPTIONS` (`Mod 52` em `frame.js`):** `indentSize: 2`, `codeIndentSize: 4`, `wordsPerMinute: 382`, `wordCountDelimiter: 0`, `enableAlert: true`, `enableInlineMath: true`, `gitlabMath: true`, `enableHighlight: false`, `enableAutoSave: false`, `expandSimpleBlock: false`, `applyImageMoveForLocal: true`, `applyImageMoveForWeb: false`.
+- **Arquitetura DOM (`window.html`, `91,786 B`, que embute `html/content.html`, além de `html/preview.html`):** `#toc-dropmenu`, `#typora-sidebar` (`#outline-content`, `#file-library`, `#file-info-content`, `#ty-sidebar-footer`), `#top-titlebar` (`24px`), `#megamenu-menu-sidebar` + `#megamenu-content`, `#md-searchpanel`, `#typora-quick-open` (`420px`), `#typora-source` (CodeMirror), `#write` (`role="textbox"`) e `footer.ty-footer` (`30px`, `#outline-btn`, `#toggle-sourceview-btn`, `#footer-word-count`, `#footer-spell-check`).
+- **`page-dist/*`:** `setting.html`, `local-setting.html`, `welcome.html` e `license.html` são SPAs React/Webpack carregadas dentro de `<webview nodeintegration="true">`.
+- **Canais IPC no JS não compilado (12 canais):** `addBackup`, `execForAll`, `export`, `getPath`, `license.show`, `menu.updateMenu`, `ondragstart`, `setting.put`, `updater.cancelUpdate`, `updater.downloadUpdate`, `updater.skipUpdate`, `window.close`.
+
+### 3. Subsistemas do editor (`appsrc/window/frame.js`)
+
+| Subsistema | Módulos JS | Regras e números observados |
+|---|---|---|
+| **Edição de Tabelas (`TableEdit`)** | `Mod 49`, `Mod 5e`, `Mod 12` | Barra flutuante `.ty-table-edit` (popover em grade `10x6`, `width 1..40`, `height 1..99`, padrão `3x4`; segundo clique no mesmo alinhamento limpa o alinhamento). Trackers no hover permitem reordenar linhas/colunas por drag-and-drop. Atalhos: `Tab`/`Shift+Tab`, `Enter`, `Ctrl+Enter` (adiciona linha), `Shift+Enter` (`<br />`), `Alt+Setas` (move linha/coluna), `Ctrl+Shift+Backspace`, `Ctrl+T`. `Mod 12` (`toMark`) limita largura de coluna entre `4..60`. |
+| **Outline & `[TOC]`** | `Mod 43`, `Mod 44`, `Mod 14`, `Mod 19` | `nodeMap.toc` atualizado com debounce de `300 ms`, sem limite de profundidade (`H1`–`H6`). Scroll spy com busca binária (`100 ms`/`200 ms`). `[TOC]`, `{:toc}` e `[[_TOC_]]` viram widget não editável. |
+| **Colagem, Imagens & Drag-Drop** | `Mod 62`, `Mod 55`, `Mod 2f`, `Mod 4b`, `Mod 10` | Prioridade no paste: texto puro/código → `text/markhtml` → `text/html` (`Mod 55` HTML→MD + heurística Markdown de 4 linhas `D`) → `e.files` → bitmap de clipboard salvo como PNG em `typora-user-images/image-YYYYMMDD...png` → `text/plain` (inclui paste de tabela TSV/pipe). Suporte a uploaders (`picgo-app` em `127.0.0.1:36677/upload`, `piclist-app`, `ipic` etc.) e `<video>`/`<audio>` (cópia de asset `<30 MB` em `.textbundle`). |
+| **Contagem de Palavras & Read Time** | `Mod 37`, `Mod 29` | Cada caractere CJK (`/[\u3040-\uABFF\uD7A4-\uFAFF]/`) vale 1 palavra; contrações contam como 1 palavra; `quickUpdate` em O(1) faz cache dos blocos excluídos + `requestIdleCallback`; tempo de leitura usa `Math.round(words / 382)` (piso `<= 1 Minute`); contagem da seleção usa debounce de `50 ms`. |
+| **Focus, Typewriter & Auto-save/Recovery** | `Mod 48`, `Mod 2b`, `Mod 32`, `Mod 3b`, `Mod 4a`, `Mod 35`, `Mod 56`, `Mod 58` | Focus Mode esmaece blocos inativos via `--blur-text-color` (`#C8C8C8` claro / `#686868` escuro) e imagens com opacidade `0.3` / `0.2`. Typewriter Mode injeta dinamicamente `#write { padding-top }` e `#write:after { height }` em `<style id="write-style">` centralizando a linha ativa (`120 ms` scroll). Backup na janela com debounce `1s..10s`; backup periódico em `draftsRecover/` a cada `10 min` (poda entre `10..40`, limpeza após `4h`); escrita atômica via `.<dir>/.~<basename>` + `Buffer.compare` + `fsync`; divergência DOM/`nodeMap` aciona `tryRecoveryFromDom()` para a área de transferência. |
+
+### 4. Temas adicionais, Tokens UI CSS e Localização PT-BR
+
+- **Temas adicionais empacotados em `style/themes/`:**
+  - `newsprint.css`: fundo `#f3f2ee`, texto `#1f0909`, fonte `PT Serif`, acento `#065588`.
+  - `pixyll.css`: fundo `#ffffff`, fontes `Merriweather` / `Lato`, acento `#463F5C`.
+  - `whitey.css`: fundo `#fefefe`, fonte `Vollkorn`, acento `#2484c1`, `h1`–`h3` centralizados.
+  - *(Observação: `gothic.css` não acompanha esta instalação Windows `1.13.7`.)*
+- **Tokens UI CSS (`window.css`, `megamenu.css`, `codemirror.css`, `base-control.css`):** `#top-titlebar: 24px`, `header: 28px`, `ty-footer: 30px`, `--sidebar-width: 270px`, `#md-searchpanel` com 3 alturas (`39px` / `74px` / `104px`), `#typora-quick-open: 420px`, hits de busca `rgba(248,192,116,.3)` (claro) / `rgba(199,140,60,0.81)` (escuro) + ocorrência ativa `#000`/`#428bca`; no modo código-fonte (`#typora-source`), `max-width: 800px` e números de linha exibidos apenas na linha ativa, primeira, última e múltiplos de `10n`.
+- **Terminologia oficial PT-BR (`locales/pt-BR.lproj/{Front,Menu,Panel,Welcome}.json`):** `"Índices"` (Outline), `"Visualizar em Tópicos"`, `"Contagem de Palavras"`, `"Modo Foco"`, `"Modo Código Fonte"`, `"Buscar e Substituir"`, `"Sem Título"`, `"Tema Claro"` / `"Tema Escuro"`, `"Exportar para PDF"`. *(Alinhado no JotMD: `TabManager` / `DesktopWorkspace` usam `"Sem Título"` e gaveta/sidebar usam `"Índices"`.)*
+
+### 5. Matriz de Paridade Typora vs JotMD (Atualizada)
+
+- **Paridade implementada e verificada em JVM (✅):** invariante de roundtrip + BOM UTF-8; blocos principais + GitHub Alerts + Front Matter + `==highlight==` + `<u>` + wikilinks/tags; `DocOutline` + widget/export `[TOC]` com âncoras HTML (`DocOutline.kt`, `HtmlExport.kt`, `BlockRenderer.kt`); `DocStats` CJK-aware a `382 WPM` (`DocStats.kt`); ops inteligentes (`SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`, `TableOps`, `SourceGutter`) com guarda de eco stale IME; multi-abas (`"Sem Título"`) + autosave; árvore de pasta + FTS4 NFD + `DirectoryTreeWatcher` e Quick Open `Ctrl+P` (`420dp`) no Desktop; busca/substituição com `Aa`, `[ab]` e substituição unitária; 5 presets de tema (`GitHub`, `Newsprint`, `Pixyll`, `Whitey`, `Night`); coluna centralizada `860dp`/`800dp`, Focus/Typewriter Mode e rodapé Desktop `30dp`; exportação HTML e PDF nativo.
+- **Paridade parcial deliberada ou pendente (🟡/❌):** foco por bloco (decisão deliberada do JotMD) vs por span; realce sintático avançado de código/source mode e regex na busca; TOC automático no PDF; sintaxes extras (notas de rodapé, links por referência, fórmulas LaTeX); CRUD completo de arquivos/pastas na árvore e barra flutuante rica/drag-and-drop de células em tabela.

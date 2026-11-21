@@ -1,0 +1,7 @@
+Versão 0.2.0:
+- Suporte a 5 temas (GitHub, Newsprint, Pixyll, Whitey, Night)
+- Índices (Outline), widget/export [TOC] e Contagem de Palavras (WPM Typora)
+- Modo Foco, Máquina de Escrever, gutter no modo código-fonte e coluna 860dp
+- Controles de tabela GFM e marcação <u>sublinhado</u>
+- Android: botão </>, Foco, Aa/[ab] e substituição unitária
+- Windows Desktop: rodapé 30dp, Quick Open (Ctrl+P) e atualização automática da pasta

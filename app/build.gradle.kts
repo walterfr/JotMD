@@ -12,13 +12,40 @@ android {
         applicationId = "io.github.walterfr.jotmd"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    val releaseKeystorePath = System.getenv("KEYSTORE_PATH")
+    val releaseKeystoreFile = releaseKeystorePath?.let { file(it) }?.takeIf { it.isFile }
+    val releaseKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("KEY_PASSWORD") ?: releaseKeystorePassword
+    val hasReleaseKeystore = releaseKeystoreFile != null &&
+        !releaseKeystorePassword.isNullOrEmpty() &&
+        !releaseKeyAlias.isNullOrEmpty() &&
+        !releaseKeyPassword.isNullOrEmpty()
+    val useDebugSigning = System.getenv("USE_DEBUG_SIGNING") == "true"
+
+    if (hasReleaseKeystore) {
+        signingConfigs {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // CI assina com keystore via secrets (ou debug se USE_DEBUG_SIGNING=true); F-Droid constrói sem env vars.
+            when {
+                hasReleaseKeystore -> signingConfig = signingConfigs.getByName("release")
+                useDebugSigning -> signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 

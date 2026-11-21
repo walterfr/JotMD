@@ -9,7 +9,7 @@ import io.github.walterfr.jotmd.editor.EditorState
 /**
  * Uma aba aberta no editor. Cada aba carrega seu próprio [EditorState] (bloco
  * focado, undo/redo) e opcionalmente uma [FileSession] (nula em documentos só
- * de leitura como o asset inicial ou abas em branco "Sem título").
+ * de leitura como o asset inicial ou abas em branco "Sem Título").
  *
  * Imutável de propósito: alterações em [session], [title] ou [saveFailed]
  * substituem a entrada na [SnapshotStateList] do [TabManager], garantindo
@@ -90,7 +90,7 @@ class TabManager(
         return created
     }
 
-    fun newEmptyTab(title: String = "Sem título", text: String = ""): EditorTab =
+    fun newEmptyTab(title: String = "Sem Título", text: String = ""): EditorTab =
         openOrFocus(key = null, title = title, text = text, session = null)
 
     fun select(id: Long) {
@@ -122,7 +122,7 @@ class TabManager(
      * Fecha a aba [id] após consultar [onBeforeClose]. Se [onBeforeClose]
      * retornar `false`, marca `saveFailed = true` na aba e mantém ela aberta
      * para não perder edições não gravadas. Ao fechar a última aba restante,
-     * abre uma aba vazia `"Sem título"`.
+     * abre uma aba vazia `"Sem Título"`.
      */
     fun close(id: Long, onBeforeClose: (EditorTab) -> Boolean = { true }): Boolean {
         val idx = _tabs.indexOfFirst { it.id == id }

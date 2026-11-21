@@ -95,4 +95,18 @@ class DocSearchTest {
         assertEquals("ba X", phraseText)
         assertEquals(1, phraseCount)
     }
+
+    @Test
+    fun `replaceRangeInText substitui faixa válida e preserva texto em faixa inválida`() {
+        assertEquals("aXe", replaceRangeInText("abcde", 1..3, "X"))
+        assertEquals("Zbcde", replaceRangeInText("abcde", 0..0, "Z"))
+        assertEquals("abcd!", replaceRangeInText("abcde", 4..4, "!"))
+        assertEquals("", replaceRangeInText("abcde", 0..4, ""))
+
+        assertEquals("abcde", replaceRangeInText("abcde", -1..2, "X"))
+        assertEquals("abcde", replaceRangeInText("abcde", 2..5, "X"))
+        assertEquals("abcde", replaceRangeInText("abcde", 3..1, "X"))
+        assertEquals("abcde", replaceRangeInText("abcde", IntRange.EMPTY, "X"))
+        assertEquals("", replaceRangeInText("", 0..0, "X"))
+    }
 }

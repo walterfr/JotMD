@@ -1,5 +1,6 @@
 package io.github.walterfr.jotmd.editor
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -269,7 +270,53 @@ class InlineTextTest {
                 },
             )
         } finally {
+            MdTokens.themePreset = MdThemePreset.GITHUB
+        }
+    }
+
+    @Test
+    fun `sublinhado com tag HTML remove delimitadores e ignora dentro de backticks`() {
+        val s = inlineText("antes <u>sublinhado</u> e <U>caixa</U>")
+        assertEquals("antes sublinhado e caixa", s.text)
+        val spans = s.spanStyles.filter { it.item.textDecoration == TextDecoration.Underline }
+        assertEquals(2, spans.size)
+        assertEquals(6, spans[0].start)
+        assertEquals(16, spans[0].end)
+        assertEquals(19, spans[1].start)
+        assertEquals(24, spans[1].end)
+
+        val code = inlineText("`<u>x</u>`")
+        assertEquals("<u>x</u>", code.text)
+        assertTrue(code.spanStyles.none { it.item.textDecoration == TextDecoration.Underline })
+    }
+
+    @Test
+    fun `MdTokens cicla presets entre temas claros e escuro`() {
+        try {
+            MdTokens.themePreset = MdThemePreset.GITHUB
+            assertEquals(MdThemePreset.NEWSPRINT, MdTokens.cycleThemePreset())
+            assertEquals(NewsprintMdPalette, MdTokens.palette)
+            assertEquals(false, MdTokens.isDark)
+
+            // isDark = false preserva tema claro customizado
             MdTokens.isDark = false
+            assertEquals(MdThemePreset.NEWSPRINT, MdTokens.themePreset)
+
+            assertEquals(MdThemePreset.PIXYLL, MdTokens.cycleThemePreset())
+            assertEquals(PixyllMdPalette, MdTokens.palette)
+
+            assertEquals(MdThemePreset.WHITEY, MdTokens.cycleThemePreset())
+            assertEquals(WhiteyMdPalette, MdTokens.palette)
+
+            assertEquals(MdThemePreset.NIGHT, MdTokens.cycleThemePreset())
+            assertEquals(DarkMdPalette, MdTokens.palette)
+            assertEquals(true, MdTokens.isDark)
+            assertEquals(Color(0xFF686868), MdTokens.blurText)
+
+            assertEquals(MdThemePreset.GITHUB, MdTokens.cycleThemePreset())
+            assertEquals(LightMdPalette, MdTokens.palette)
+        } finally {
+            MdTokens.themePreset = MdThemePreset.GITHUB
         }
     }
 }

@@ -11,8 +11,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Paleta de cores do editor (tema claro `github` e tema escuro `night` do
- * Typora — ver DESIGN.md).
+ * Presets de tema do Typora disponíveis no editor (`github`, `newsprint`,
+ * `pixyll`, `whitey` e `night`).
+ */
+enum class MdThemePreset(val id: String, val displayName: String, val isDark: Boolean) {
+    GITHUB("github", "GitHub", false),
+    NEWSPRINT("newsprint", "Newsprint", false),
+    PIXYLL("pixyll", "Pixyll", false),
+    WHITEY("whitey", "Whitey", false),
+    NIGHT("night", "Night", true),
+}
+
+/**
+ * Paleta de cores do editor (temas do Typora — ver DESIGN.md).
  */
 data class MdPalette(
     val text: Color,
@@ -83,21 +94,120 @@ val DarkMdPalette = MdPalette(
     alertCaution = Color(0xFFCF222E),
 )
 
+val NewsprintMdPalette = MdPalette(
+    text = Color(0xFF1F0909),
+    headingText = Color(0xFF1F0909),
+    muted = Color(0xFF656565),
+    link = Color(0xFF065588),
+    background = Color(0xFFF3F2EE),
+    headingRule = Color(0xFFC5C5C5),
+    quoteBar = Color(0xFFDADADA),
+    ruleColor = Color(0xFFDCDAD5),
+    codeBorder = Color(0xFFD6D4CE),
+    tableBorder = Color(0xFFD6D4CE),
+    inlineCodeBackground = Color(0xFFEAE8E1),
+    fenceBackground = Color(0xFFEAE9E5),
+    metaBackground = Color(0xFFEAE9E5),
+    highlightBackground = Color(0xFFFFF3A3),
+    highlightText = Color(0xFF1F0909),
+    alertNote = LightMdPalette.alertNote,
+    alertImportant = LightMdPalette.alertImportant,
+    alertWarning = LightMdPalette.alertWarning,
+    alertTip = LightMdPalette.alertTip,
+    alertCaution = LightMdPalette.alertCaution,
+)
+
+val PixyllMdPalette = MdPalette(
+    text = Color(0xFF333333),
+    headingText = Color(0xFF333333),
+    muted = Color(0xFF7A7A7A),
+    link = Color(0xFF463F5C),
+    background = Color(0xFFFFFFFF),
+    headingRule = Color(0xFFEEEEEE),
+    quoteBar = Color(0xFF7A7A7A),
+    ruleColor = Color(0xFFE7E7E7),
+    codeBorder = Color(0xFFE7EAED),
+    tableBorder = Color(0xFFDFE2E5),
+    inlineCodeBackground = Color(0xFFF3F4F4),
+    fenceBackground = Color(0xFFF8F8F8),
+    metaBackground = Color(0xFFF7F7F7),
+    highlightBackground = Color(0xFFFFF3A3),
+    highlightText = Color(0xFF333333),
+    alertNote = LightMdPalette.alertNote,
+    alertImportant = LightMdPalette.alertImportant,
+    alertWarning = LightMdPalette.alertWarning,
+    alertTip = LightMdPalette.alertTip,
+    alertCaution = LightMdPalette.alertCaution,
+)
+
+val WhiteyMdPalette = MdPalette(
+    text = Color(0xFF333333),
+    headingText = Color(0xFF333333),
+    muted = Color(0xFF777777),
+    link = Color(0xFF2484C1),
+    background = Color(0xFFFEFEFE),
+    headingRule = Color(0xFFEEEEEE),
+    quoteBar = Color(0xFFE5E5E5),
+    ruleColor = Color(0xFFE7E7E7),
+    codeBorder = Color(0xFFEAEAEA),
+    tableBorder = Color(0xFFDFDFDF),
+    inlineCodeBackground = Color(0xFFF5F5F5),
+    fenceBackground = Color(0xFFF8F8F8),
+    metaBackground = Color(0xFFF6F6F6),
+    highlightBackground = Color(0xFFFFF3A3),
+    highlightText = Color(0xFF333333),
+    alertNote = LightMdPalette.alertNote,
+    alertImportant = LightMdPalette.alertImportant,
+    alertWarning = LightMdPalette.alertWarning,
+    alertTip = LightMdPalette.alertTip,
+    alertCaution = LightMdPalette.alertCaution,
+)
+
 /**
- * Tokens tirados dos temas `github` e `night` do Typora instalado — ver DESIGN.md.
+ * Tokens tirados dos temas `github`, `newsprint`, `pixyll`, `whitey` e `night`
+ * do Typora instalado — ver DESIGN.md.
  *
  * O Typora usa raiz de 14px no desktop. Aqui a raiz é 16sp, porque 14sp num
  * tablet segurado à distância de leitura fica pequeno. As proporções entre
  * níveis são as do Typora; só a base mudou.
  *
- * ponytail: estado global simples (`isDark` observável pelo Compose). Vira
+ * ponytail: estado global simples (`themePreset` observável pelo Compose). Vira
  * CompositionLocal só se duas telas no mesmo processo precisarem de temas
  * opostos ao mesmo tempo.
  */
 object MdTokens {
-    var isDark: Boolean by mutableStateOf(false)
+    var themePreset: MdThemePreset by mutableStateOf(MdThemePreset.GITHUB)
 
-    val palette: MdPalette get() = if (isDark) DarkMdPalette else LightMdPalette
+    var isDark: Boolean
+        get() = themePreset.isDark
+        set(value) {
+            themePreset = if (value) {
+                MdThemePreset.NIGHT
+            } else if (themePreset.isDark) {
+                MdThemePreset.GITHUB
+            } else {
+                themePreset
+            }
+        }
+
+    val palette: MdPalette
+        get() = when (themePreset) {
+            MdThemePreset.GITHUB -> LightMdPalette
+            MdThemePreset.NEWSPRINT -> NewsprintMdPalette
+            MdThemePreset.PIXYLL -> PixyllMdPalette
+            MdThemePreset.WHITEY -> WhiteyMdPalette
+            MdThemePreset.NIGHT -> DarkMdPalette
+        }
+
+    fun cycleThemePreset(): MdThemePreset {
+        val entries = MdThemePreset.entries
+        themePreset = entries[(themePreset.ordinal + 1) % entries.size]
+        return themePreset
+    }
+
+    val blurText: Color get() = if (isDark) Color(0xFF686868) else Color(0xFFC8C8C8)
+    val maxColumnWidth = 860.dp
+    val sourceMaxColumnWidth = 800.dp
 
     val base = 16.sp
     val bodyLineHeight = 25.6.sp // 1.6

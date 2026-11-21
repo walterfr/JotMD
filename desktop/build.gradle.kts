@@ -22,13 +22,16 @@ dependencies {
     testImplementation(libs.kotlin.test)
 }
 
+val desktopPackageVersionRaw = (findProperty("desktopPackageVersion") as String?)?.trim().orEmpty()
+val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.2.0"
+
 compose.desktop {
     application {
         mainClass = "io.github.walterfr.jotmd.desktop.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "JotMD"
-            packageVersion = "0.1.0"
+            packageVersion = desktopPackageVersion
         }
     }
 }

@@ -8,12 +8,19 @@ import io.github.walterfr.jotmd.core.tagsOf
 import io.github.walterfr.jotmd.editor.EditorState
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.nio.file.ClosedWatchServiceException
+import java.nio.file.FileSystems
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardWatchEventKinds
+import java.nio.file.WatchKey
+import java.nio.file.WatchService
 import java.nio.file.attribute.BasicFileAttributes
 import java.text.Normalizer
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Aba aberta no workspace desktop. */
 class DesktopTab(
@@ -107,7 +114,7 @@ class DesktopTabManager {
         return tab
     }
 
-    fun newEmptyTab(title: String = "Sem título"): DesktopTab {
+    fun newEmptyTab(title: String = "Sem Título"): DesktopTab {
         val tab = DesktopTab(
             id = nextId++,
             file = null,
@@ -485,4 +492,222 @@ private fun buildSnippet(
         .distinct()
 
     return finalText to marks
+}
+
+/** Item exibido no modal Quick Open (`Ctrl+P`). */
+data class QuickOpenItem(
+    val title: String,
+    val subtitle: String,
+    val path: Path?,
+    val tabId: Long?,
+)
+
+private data class QuickOpenCandidate(
+    val item: QuickOpenItem,
+    val searchTitle: String,
+    val searchPath: String,
+)
+
+/**
+ * Combina arquivos da árvore e abas abertas sem duplicar o mesmo caminho
+ * normalizado, filtra com dobra de acentos e ordena priorizando match no
+ * título/nome seguido de ordem alfabética.
+ */
+fun filterQuickOpen(
+    query: String,
+    entries: List<DesktopDocEntry>,
+    openTabs: List<DesktopTab>,
+    limit: Int = 30,
+): List<QuickOpenItem> {
+    if (limit <= 0) return emptyList()
+
+    val tabByPath = HashMap<Path, DesktopTab>()
+    for (tab in openTabs) {
+        val norm = tab.file?.toAbsolutePath()?.normalize() ?: continue
+        tabByPath.putIfAbsent(norm, tab)
+    }
+
+    val candidates = ArrayList<QuickOpenCandidate>()
+    val seenPaths = HashSet<Path>()
+
+    for (entry in entries) {
+        if (entry.isDir) continue
+        val norm = entry.path.toAbsolutePath().normalize()
+        if (!seenPaths.add(norm)) continue
+        val tab = tabByPath[norm]
+        candidates += QuickOpenCandidate(
+            item = QuickOpenItem(
+                title = entry.name,
+                subtitle = entry.relativePath,
+                path = norm,
+                tabId = tab?.id,
+            ),
+            searchTitle = foldAccents(entry.name),
+            searchPath = foldAccents(entry.relativePath.replace('\\', '/')),
+        )
+    }
+
+    for (tab in openTabs) {
+        val norm = tab.file?.toAbsolutePath()?.normalize()
+        if (norm == null) {
+            candidates += QuickOpenCandidate(
+                item = QuickOpenItem(
+                    title = tab.title,
+                    subtitle = "Rascunho",
+                    path = null,
+                    tabId = tab.id,
+                ),
+                searchTitle = foldAccents(tab.title),
+                searchPath = "",
+            )
+        } else if (seenPaths.add(norm)) {
+            candidates += QuickOpenCandidate(
+                item = QuickOpenItem(
+                    title = tab.title,
+                    subtitle = norm.toString(),
+                    path = norm,
+                    tabId = tab.id,
+                ),
+                searchTitle = foldAccents(tab.title),
+                searchPath = foldAccents(norm.toString().replace('\\', '/')),
+            )
+        }
+    }
+
+    val foldedQuery = foldAccents(query.trim().replace('\\', '/'))
+    if (foldedQuery.isEmpty()) {
+        return candidates
+            .map { it.item }
+            .sortedWith(compareBy({ it.title.lowercase() }, { it.subtitle.lowercase() }))
+            .take(limit)
+    }
+
+    return candidates
+        .mapNotNull { c ->
+            val titleHit = c.searchTitle.contains(foldedQuery)
+            val pathHit = c.searchPath.contains(foldedQuery)
+            if (titleHit || pathHit) c to titleHit else null
+        }
+        .sortedWith(
+            compareBy<Pair<QuickOpenCandidate, Boolean>>(
+                { !it.second },
+                { it.first.item.title.lowercase() },
+                { it.first.item.subtitle.lowercase() },
+            ),
+        )
+        .take(limit)
+        .map { it.first.item }
+}
+
+/**
+ * Observa a pasta raiz e subpastas não ocultas via [WatchService], disparando
+ * [onChanged] apenas quando há alteração em `.md`/`.markdown`, criação ou
+ * exclusão de pasta não oculta, ou `OVERFLOW`.
+ */
+class DirectoryTreeWatcher(
+    root: Path,
+    private val onChanged: () -> Unit,
+) : AutoCloseable {
+    private val normRoot = root.toAbsolutePath().normalize()
+    private val watchService: WatchService = FileSystems.getDefault().newWatchService()
+    private val keys = ConcurrentHashMap<WatchKey, Path>()
+    private val watchedDirs = ConcurrentHashMap.newKeySet<Path>()
+    private val closed = AtomicBoolean(false)
+    private val worker: Thread
+
+    init {
+        if (Files.isDirectory(normRoot)) {
+            registerTree(normRoot)
+        }
+        worker = Thread(::watchLoop, "jotmd-tree-watcher").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun registerTree(start: Path) {
+        runCatching {
+            Files.walkFileTree(
+                start,
+                object : SimpleFileVisitor<Path>() {
+                    override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        if (dir != normRoot && dir.fileName?.toString()?.startsWith(".") == true) {
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        val normDir = dir.toAbsolutePath().normalize()
+                        if (!keys.values.contains(normDir)) {
+                            val key = normDir.register(
+                                watchService,
+                                StandardWatchEventKinds.ENTRY_CREATE,
+                                StandardWatchEventKinds.ENTRY_DELETE,
+                                StandardWatchEventKinds.ENTRY_MODIFY,
+                            )
+                            keys[key] = normDir
+                            watchedDirs.add(normDir)
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult =
+                        FileVisitResult.CONTINUE
+                },
+            )
+        }
+    }
+
+    private fun watchLoop() {
+        while (!closed.get() && !Thread.currentThread().isInterrupted) {
+            val key = try {
+                watchService.take()
+            } catch (_: InterruptedException) {
+                break
+            } catch (_: ClosedWatchServiceException) {
+                break
+            }
+            val dir = keys[key]
+            var shouldNotify = false
+            for (event in key.pollEvents()) {
+                val kind = event.kind()
+                if (kind == StandardWatchEventKinds.OVERFLOW) {
+                    shouldNotify = true
+                    continue
+                }
+                val rel = event.context() as? Path ?: continue
+                val name = rel.fileName?.toString() ?: continue
+                if (name.startsWith(".")) continue
+
+                val child = dir?.resolve(rel)?.toAbsolutePath()?.normalize()
+                when {
+                    isMarkdownName(name) -> shouldNotify = true
+                    kind == StandardWatchEventKinds.ENTRY_CREATE && child != null && Files.isDirectory(child) -> {
+                        registerTree(child)
+                        shouldNotify = true
+                    }
+                    kind == StandardWatchEventKinds.ENTRY_DELETE && child != null && watchedDirs.remove(child) -> {
+                        shouldNotify = true
+                    }
+                }
+            }
+            if (!key.reset()) {
+                keys.remove(key)
+            }
+            if (shouldNotify && !closed.get()) {
+                runCatching { onChanged() }
+            }
+        }
+    }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        for (key in keys.keys) {
+            runCatching { key.cancel() }
+        }
+        keys.clear()
+        watchedDirs.clear()
+        runCatching { watchService.close() }
+        worker.interrupt()
+        if (Thread.currentThread() !== worker) {
+            runCatching { worker.join(1000) }
+        }
+    }
 }

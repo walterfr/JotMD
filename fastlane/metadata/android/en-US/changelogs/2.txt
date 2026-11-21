@@ -1,0 +1,7 @@
+Release 0.2.0:
+- 5 Typora-style themes (GitHub, Newsprint, Pixyll, Whitey, Night)
+- Document Outline, clickable/HTML [TOC], and word/reading-time stats
+- Focus mode, Typewriter mode, source gutter, and centered 860dp column
+- GFM table row/column controls and inline <u>underline</u>
+- Android: </> and Focus toggles, Aa/[ab] search, single-match replace
+- Windows Desktop: 30dp footer, Quick Open (Ctrl+P), and live folder watcher

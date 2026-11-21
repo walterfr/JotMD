@@ -67,6 +67,19 @@ fun replaceAllInText(
     return out.toString() to count
 }
 
+/**
+ * Substitui exatamente a faixa inclusiva não-vazia [range] em [text] por [replacement].
+ * Devolve [text] inalterado se a faixa for vazia ou estiver fora dos limites `0 until text.length`.
+ */
+fun replaceRangeInText(text: String, range: IntRange, replacement: String): String {
+    if (range.isEmpty() || range.first < 0 || range.last >= text.length) return text
+    return buildString(text.length - (range.last - range.first + 1) + replacement.length) {
+        append(text, 0, range.first)
+        append(replacement)
+        append(text, range.last + 1, text.length)
+    }
+}
+
 private inline fun forEachMatch(
     text: String,
     query: String,

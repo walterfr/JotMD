@@ -23,8 +23,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -39,6 +41,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -59,15 +62,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import io.github.walterfr.jotmd.core.docStatsOf
 import io.github.walterfr.jotmd.core.exportToHtml
 import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
+import io.github.walterfr.jotmd.core.outlineOf
+import io.github.walterfr.jotmd.editor.MdThemePreset
 import io.github.walterfr.jotmd.editor.MdTokens
 import io.github.walterfr.jotmd.editor.TAG_URI
 import io.github.walterfr.jotmd.editor.WIKI_URI
@@ -101,6 +108,9 @@ private class OpenMarkdown : ActivityResultContracts.OpenDocument() {
 
 private const val PREF_ROOT = "root_uri"
 private const val PREF_DARK = "dark_theme"
+private const val PREF_THEME = "theme_preset"
+
+private enum class DrawerTab { FILES, OUTLINE }
 
 /** Seletor de pasta com leitura+escrita persistentes (mesmo motivo do OpenMarkdown). */
 private class PickRoot : ActivityResultContracts.OpenDocumentTree() {
@@ -119,8 +129,14 @@ class MainActivity: ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val prefs = remember { context.getSharedPreferences("jotmd", Context.MODE_PRIVATE) }
-            var isDark by remember { mutableStateOf(prefs.getBoolean(PREF_DARK, false)) }
-            MdTokens.isDark = isDark
+            var themePreset by remember {
+                val savedId = prefs.getString(PREF_THEME, null)
+                val initial = MdThemePreset.entries.firstOrNull { it.id == savedId }
+                    ?: if (prefs.getBoolean(PREF_DARK, false)) MdThemePreset.NIGHT else MdThemePreset.GITHUB
+                mutableStateOf(initial)
+            }
+            MdTokens.themePreset = themePreset
+            val isDark = themePreset.isDark
             LaunchedEffect(isDark) {
                 enableEdgeToEdge(
                     statusBarStyle = if (isDark) {
@@ -145,12 +161,14 @@ class MainActivity: ComponentActivity() {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     EditorHostScreen(
                         prefs = prefs,
-                        isDark = isDark,
-                        onToggleTheme = {
-                            val next = !isDark
-                            isDark = next
-                            MdTokens.isDark = next
-                            prefs.edit().putBoolean(PREF_DARK, next).apply()
+                        themePreset = themePreset,
+                        onCycleTheme = {
+                            val next = MdTokens.cycleThemePreset()
+                            themePreset = next
+                            prefs.edit()
+                                .putString(PREF_THEME, next.id)
+                                .putBoolean(PREF_DARK, next.isDark)
+                                .apply()
                         },
                     )
                 }
@@ -172,9 +190,10 @@ class MainActivity: ComponentActivity() {
 @Composable
 private fun EditorHostScreen(
     prefs: android.content.SharedPreferences,
-    isDark: Boolean,
-    onToggleTheme: () -> Unit,
+    themePreset: MdThemePreset,
+    onCycleTheme: () -> Unit,
 ) {
+    val isDark = themePreset.isDark
     val context = LocalContext.current
     val tabManager = remember { TabManager(initialTitle = "typora-ref.md", initialKey = ASSET_REF_KEY) }
     val activeTab = tabManager.activeTab
@@ -242,9 +261,16 @@ private fun EditorHostScreen(
     var showFindBar by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var replaceQuery by remember { mutableStateOf("") }
+    var caseSensitive by remember { mutableStateOf(false) }
+    var wholeWord by remember { mutableStateOf(false) }
     var matchCursor by remember { mutableStateOf(0) }
-    val docMatches = remember(activeTab.id, activeTab.editorState.doc, findQuery) {
-        findInDocument(activeTab.editorState.doc, findQuery)
+    val docMatches = remember(activeTab.id, activeTab.editorState.doc, findQuery, caseSensitive, wholeWord) {
+        findInDocument(
+            activeTab.editorState.doc,
+            findQuery,
+            caseSensitive = caseSensitive,
+            wholeWord = wholeWord,
+        )
     }
 
     LaunchedEffect(docMatches) {
@@ -338,6 +364,7 @@ private fun EditorHostScreen(
     var root by remember { mutableStateOf(prefs.getString(PREF_ROOT, null)?.let(Uri::parse)) }
     var nodes by remember { mutableStateOf(emptyList<DocNode>()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var drawerTab by remember { mutableStateOf(DrawerTab.FILES) }
 
     val pickRoot = rememberLauncherForActivityResult(PickRoot()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -395,6 +422,7 @@ private fun EditorHostScreen(
             }
             uri.startsWith(TAG_URI) -> {
                 query = "#" + uri.removePrefix(TAG_URI)
+                drawerTab = DrawerTab.FILES
                 scope.launch { drawerState.open() }
             }
             else -> runCatching { defaultUriHandler.openUri(uri) }
@@ -409,73 +437,156 @@ private fun EditorHostScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet {
-                TextButton(onClick = { pickRoot.launch(null) }) {
-                    Text(if (root == null) "Escolher pasta" else "Trocar pasta")
-                }
-                if (root != null) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = { Text("Buscar") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    DrawerTabButton(
+                        label = "Arquivos",
+                        selected = drawerTab == DrawerTab.FILES,
+                        onClick = { drawerTab = DrawerTab.FILES },
+                        modifier = Modifier.weight(1f),
+                    )
+                    DrawerTabButton(
+                        label = "Índices",
+                        selected = drawerTab == DrawerTab.OUTLINE,
+                        onClick = { drawerTab = DrawerTab.OUTLINE },
+                        modifier = Modifier.weight(1f),
                     )
                 }
                 HorizontalDivider()
-                if (query.isNotBlank()) {
-                    LazyColumn {
-                        items(hits, key = { it.docId }) { hit ->
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val r = root ?: return@clickable
-                                        openUri(DocumentsContract.buildDocumentUriUsingTree(r, hit.docId))
-                                        scope.launch { drawerState.close() }
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                            ) {
-                                Text(hit.name, style = MaterialTheme.typography.titleSmall)
-                                val (text, marks) = snippetMarks(hit.snippet)
+                if (drawerTab == DrawerTab.FILES) {
+                    TextButton(onClick = { pickRoot.launch(null) }) {
+                        Text(if (root == null) "Escolher pasta" else "Trocar pasta")
+                    }
+                    if (root != null) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            placeholder = { Text("Buscar") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
+                    HorizontalDivider()
+                    if (query.isNotBlank()) {
+                        if (hits.isEmpty()) {
+                            Box(Modifier.weight(1f).fillMaxWidth()) {
                                 Text(
-                                    buildAnnotatedString {
-                                        append(text)
-                                        for (m in marks) {
-                                            addStyle(SpanStyle(fontWeight = FontWeight.Bold), m.first, m.last + 1)
-                                        }
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
+                                    "Nada encontrado",
+                                    Modifier.padding(16.dp),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
+                                )
+                            }
+                        } else {
+                            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                                items(hits, key = { it.docId }) { hit ->
+                                    Column(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                val r = root ?: return@clickable
+                                                openUri(DocumentsContract.buildDocumentUriUsingTree(r, hit.docId))
+                                                scope.launch { drawerState.close() }
+                                            }
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    ) {
+                                        Text(hit.name, style = MaterialTheme.typography.titleSmall)
+                                        val (text, marks) = snippetMarks(hit.snippet)
+                                        Text(
+                                            buildAnnotatedString {
+                                                append(text)
+                                                for (m in marks) {
+                                                    addStyle(SpanStyle(fontWeight = FontWeight.Bold), m.first, m.last + 1)
+                                                }
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                            items(nodes, key = { it.docId }) { node ->
+                                Text(
+                                    text = if (node.isDir) node.name + "/" else node.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = !node.isDir) {
+                                            val r = root ?: return@clickable
+                                            openUri(
+                                                DocumentsContract.buildDocumentUriUsingTree(r, node.docId),
+                                            )
+                                            scope.launch { drawerState.close() }
+                                        }
+                                        .padding(
+                                            start = (16 + 16 * node.depth).dp,
+                                            top = 10.dp,
+                                            end = 16.dp,
+                                            bottom = 10.dp,
+                                        ),
                                 )
                             }
                         }
                     }
-                    if (hits.isEmpty()) {
-                        Text(
-                            "Nada encontrado",
-                            Modifier.padding(16.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                } else {
+                    val outline = remember(activeTab.id, activeTab.editorState.doc) {
+                        outlineOf(activeTab.editorState.doc)
                     }
-                } else LazyColumn {
-                    items(nodes, key = { it.docId }) { node ->
-                        Text(
-                            text = if (node.isDir) node.name + "/" else node.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !node.isDir) {
-                                    val r = root ?: return@clickable
-                                    openUri(
-                                        DocumentsContract.buildDocumentUriUsingTree(r, node.docId),
-                                    )
-                                    scope.launch { drawerState.close() }
-                                }
-                                .padding(start = (16 + 16 * node.depth).dp, top = 10.dp, end = 16.dp, bottom = 10.dp),
-                        )
+                    if (outline.isEmpty()) {
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            Text(
+                                "Sem títulos no documento",
+                                Modifier.padding(16.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                            items(outline, key = { "${it.blockId.v}:${it.blockIndex}" }) { entry ->
+                                Text(
+                                    text = entry.title,
+                                    style = if (entry.level <= 2) {
+                                        MaterialTheme.typography.titleSmall
+                                    } else {
+                                        MaterialTheme.typography.bodyMedium
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            activeTab.editorState.focusBlockIndex(entry.blockIndex)
+                                            scope.launch {
+                                                listStates[activeTab.id]?.animateScrollToItem(entry.blockIndex)
+                                                drawerState.close()
+                                            }
+                                        }
+                                        .padding(
+                                            start = (16 + (entry.level - 1) * 14).dp,
+                                            top = 10.dp,
+                                            end = 16.dp,
+                                            bottom = 10.dp,
+                                        ),
+                                )
+                            }
+                        }
                     }
                 }
+                val stats = remember(activeTab.id, activeTab.editorState.doc) {
+                    docStatsOf(activeTab.editorState.doc)
+                }
+                HorizontalDivider()
+                Text(
+                    text = "Contagem de Palavras: ${stats.words} palavras · ${stats.chars} caract. · ~${stats.readingTimeMinutes} min",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
             }
         },
     ) {
@@ -485,70 +596,100 @@ private fun EditorHostScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .safeDrawingPadding(),
         ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(
-                    onClick = { scope.launch { drawerState.open() } },
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                ) { Text("Pasta") }
-                Text(
-                    text = activeTab.title,
-                    modifier = Modifier.weight(1f).padding(start = 4.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (activeTab.saveFailed) {
-                    Text(
-                        "Erro ao salvar",
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val maxControlsWidth = (maxWidth - 180.dp).coerceAtLeast(160.dp)
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = { scope.launch { drawerState.open() } },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text("Pasta") }
+                    Row(
+                        Modifier.weight(1f).padding(start = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = activeTab.title,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (activeTab.saveFailed) {
+                            Text(
+                                "Erro ao salvar",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
+                        }
+                        notice?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(start = 6.dp).widthIn(max = 120.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Row(
+                        Modifier
+                            .widthIn(max = maxControlsWidth)
+                            .horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        ModeToggleChip(
+                            label = "</>",
+                            active = activeTab.editorState.isSourceMode,
+                            onClick = { activeTab.editorState.toggleSourceMode() },
+                        )
+                        ModeToggleChip(
+                            label = "Foco",
+                            active = activeTab.editorState.isFocusMode,
+                            onClick = { activeTab.editorState.toggleFocusMode() },
+                        )
+                        TextButton(
+                            onClick = { showFindBar = !showFindBar },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("Buscar") }
+                        TextButton(
+                            onClick = {
+                                val base = activeTab.title.substringBeforeLast('.').ifBlank { "documento" }
+                                exportHtmlLauncher.launch("$base.html")
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("HTML") }
+                        TextButton(
+                            onClick = {
+                                val base = activeTab.title.substringBeforeLast('.').ifBlank { "documento" }
+                                exportPdfLauncher.launch("$base.pdf")
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("PDF") }
+                        TextButton(
+                            onClick = onCycleTheme,
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text(themePreset.displayName) }
+                        TextButton(
+                            onClick = { open.launch(arrayOf("text/markdown", "text/plain", "*/*")) },
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) { Text("Abrir") }
+                    }
                 }
-                notice?.let {
-                    Text(
-                        it,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 6.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                TextButton(
-                    onClick = { showFindBar = !showFindBar },
-                    contentPadding = PaddingValues(horizontal = 6.dp),
-                ) { Text("Buscar") }
-                TextButton(
-                    onClick = {
-                        val base = activeTab.title.substringBeforeLast('.').ifBlank { "documento" }
-                        exportHtmlLauncher.launch("$base.html")
-                    },
-                    contentPadding = PaddingValues(horizontal = 6.dp),
-                ) { Text("HTML") }
-                TextButton(
-                    onClick = {
-                        val base = activeTab.title.substringBeforeLast('.').ifBlank { "documento" }
-                        exportPdfLauncher.launch("$base.pdf")
-                    },
-                    contentPadding = PaddingValues(horizontal = 6.dp),
-                ) { Text("PDF") }
-                TextButton(
-                    onClick = onToggleTheme,
-                    contentPadding = PaddingValues(horizontal = 6.dp),
-                ) { Text(if (isDark) "Claro" else "Escuro") }
-                TextButton(
-                    onClick = { open.launch(arrayOf("text/markdown", "text/plain", "*/*")) },
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                ) { Text("Abrir") }
             }
             if (showFindBar) {
                 HorizontalDivider()
                 AndroidNoteFindBar(
                     findQuery = findQuery,
                     replaceQuery = replaceQuery,
+                    caseSensitive = caseSensitive,
+                    wholeWord = wholeWord,
                     matchIndex = matchCursor,
                     matchCount = docMatches.size,
                     onFindChange = {
@@ -556,10 +697,29 @@ private fun EditorHostScreen(
                         matchCursor = 0
                     },
                     onReplaceChange = { replaceQuery = it },
+                    onToggleCaseSensitive = {
+                        caseSensitive = !caseSensitive
+                        matchCursor = 0
+                    },
+                    onToggleWholeWord = {
+                        wholeWord = !wholeWord
+                        matchCursor = 0
+                    },
                     onPrev = { jumpToMatch(matchCursor - 1) },
                     onNext = { jumpToMatch(matchCursor + 1) },
+                    onReplaceCurrent = {
+                        val match = docMatches.getOrNull(matchCursor)
+                        if (match != null && activeTab.editorState.replaceMatch(match, replaceQuery)) {
+                            notice = "1 substituído"
+                        }
+                    },
                     onReplaceAll = {
-                        val replaced = activeTab.editorState.replaceAll(findQuery, replaceQuery)
+                        val replaced = activeTab.editorState.replaceAll(
+                            query = findQuery,
+                            replacement = replaceQuery,
+                            caseSensitive = caseSensitive,
+                            wholeWord = wholeWord,
+                        )
                         notice = "$replaced substituído(s)"
                     },
                     onClose = { showFindBar = false },
@@ -605,22 +765,96 @@ private fun EditorHostScreen(
 }
 
 @Composable
+private fun DrawerTabButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+    ) {
+        Box(
+            modifier = Modifier.padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
+/** Chip de modo na barra superior sem roubar foco do `BasicTextField` ativo (Armadilha 5). */
+@Composable
+private fun ModeToggleChip(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val currentOnClick = rememberUpdatedState(onClick)
+    val shape = RoundedCornerShape(6.dp)
+    val bg = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+    val fg = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(bg)
+            .then(
+                if (active) Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), shape)
+                else Modifier,
+            )
+            .defaultMinSize(minHeight = 36.dp)
+            .pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick.value() }) }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            color = fg,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
 private fun AndroidNoteFindBar(
     findQuery: String,
     replaceQuery: String,
+    caseSensitive: Boolean,
+    wholeWord: Boolean,
     matchIndex: Int,
     matchCount: Int,
     onFindChange: (String) -> Unit,
     onReplaceChange: (String) -> Unit,
+    onToggleCaseSensitive: () -> Unit,
+    onToggleWholeWord: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onReplaceCurrent: () -> Unit,
     onReplaceAll: () -> Unit,
     onClose: () -> Unit,
 ) {
     val counter = if (matchCount == 0) "0/0" else "${matchIndex.coerceIn(0, matchCount - 1) + 1}/$matchCount"
     Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 OutlinedTextField(
                     value = findQuery,
                     onValueChange = onFindChange,
@@ -628,21 +862,17 @@ private fun AndroidNoteFindBar(
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
+                FindOptionChip(label = "Aa", active = caseSensitive, onClick = onToggleCaseSensitive)
+                FindOptionChip(label = "[ab]", active = wholeWord, onClick = onToggleWholeWord)
                 Text(
                     counter,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 4.dp),
                 )
-                TextButton(onClick = onPrev, enabled = matchCount > 0, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Text("↑")
-                }
-                TextButton(onClick = onNext, enabled = matchCount > 0, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Text("↓")
-                }
-                TextButton(onClick = onClose, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Text("×")
-                }
+                CompactFindButton(label = "↑", enabled = matchCount > 0, onClick = onPrev)
+                CompactFindButton(label = "↓", enabled = matchCount > 0, onClick = onNext)
+                CompactFindButton(label = "×", enabled = true, onClick = onClose)
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -654,11 +884,80 @@ private fun AndroidNoteFindBar(
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(
+                    onClick = onReplaceCurrent,
+                    enabled = matchCount > 0,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) { Text("Subst.") }
+                TextButton(
                     onClick = onReplaceAll,
                     enabled = findQuery.isNotEmpty(),
                     contentPadding = PaddingValues(horizontal = 8.dp),
                 ) { Text("Subst. tudo") }
             }
+        }
+    }
+}
+
+@Composable
+private fun FindOptionChip(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        modifier = if (active) {
+            Modifier.border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), shape)
+        } else {
+            Modifier
+        },
+    ) {
+        Box(
+            modifier = Modifier.defaultMinSize(minWidth = 32.dp, minHeight = 36.dp).padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (active) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactFindButton(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(6.dp),
+        color = Color.Transparent,
+    ) {
+        Box(
+            modifier = Modifier.defaultMinSize(minWidth = 32.dp, minHeight = 36.dp).padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                },
+            )
         }
     }
 }

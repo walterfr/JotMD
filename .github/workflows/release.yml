@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão opcional para build manual (ex.: 0.2.0)'
+        required: false
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Android APK & Testes JVM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Garantir permissão de execução no gradlew
+        run: chmod +x gradlew
+
+      - name: Definir versão da build
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configurar assinatura do APK
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" ]]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            {
+              echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+              echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "KEY_ALIAS=$KEY_ALIAS"
+              echo "KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            } >> "$GITHUB_ENV"
+          else
+            echo "Secrets de keystore ausentes; usando assinatura debug no release de CI."
+            echo "USE_DEBUG_SIGNING=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Rodar testes JVM e compilar APK Release
+        run: ./gradlew test :app:assembleRelease --no-daemon
+
+      - name: Empacotar APK em dist/
+        shell: bash
+        run: |
+          mkdir -p dist
+          APK=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)
+          if [[ -z "$APK" ]]; then
+            echo "Nenhum APK gerado em app/build/outputs/apk/release" >&2
+            exit 1
+          fi
+          cp "$APK" "dist/jotmd-android-${{ steps.meta.outputs.version }}.apk"
+
+      - name: Upload artefato Android
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-dist
+          path: dist/*.apk
+          if-no-files-found: error
+
+  windows:
+    name: Windows Desktop (.msi, .exe, .zip)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Definir versão do pacote Windows
+        id: meta
+        shell: pwsh
+        run: |
+          $raw = if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $env:GITHUB_REF_NAME.Substring(1)
+          } elseif ("${{ inputs.version }}".Trim().Length -gt 0) {
+            "${{ inputs.version }}".Trim()
+          } else {
+            '0.1.0'
+          }
+          $msi = if ($raw -match '(\d+\.\d+\.\d+)') { $Matches[1] } else { '0.1.0' }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$raw"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "msi_version=$msi"
+
+      - name: Rodar testes :desktop e gerar MSI, EXE e imagem portátil
+        shell: pwsh
+        run: .\gradlew.bat :desktop:test :desktop:packageMsi :desktop:packageExe :desktop:createDistributable "-PdesktopPackageVersion=${{ steps.meta.outputs.msi_version }}" --no-daemon
+
+      - name: Empacotar artefatos Windows em dist/
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $ver = "${{ steps.meta.outputs.version }}"
+
+          $msi = Get-ChildItem -Path desktop/build/compose/binaries/main/msi -Recurse -Filter *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) { throw "Instalador .msi nao encontrado." }
+          Copy-Item $msi.FullName "dist/jotmd-windows-$ver.msi"
+
+          $exe = Get-ChildItem -Path desktop/build/compose/binaries/main/exe -Recurse -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $exe) { throw "Instalador .exe nao encontrado." }
+          Copy-Item $exe.FullName "dist/jotmd-windows-$ver-setup.exe"
+
+          $appDir = "desktop/build/compose/binaries/main/app/JotMD"
+          if (-not (Test-Path $appDir)) { throw "Diretorio portatil $appDir nao encontrado." }
+          Compress-Archive -Path "$appDir/*" -DestinationPath "dist/jotmd-windows-$ver-portable.zip" -Force
+
+      - name: Upload artefato Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publicar GitHub Release
+    needs: [android, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Gerar SHA256SUMS.txt
+        shell: bash
+        run: |
+          cd dist
+          sha256sum jotmd-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Criar GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

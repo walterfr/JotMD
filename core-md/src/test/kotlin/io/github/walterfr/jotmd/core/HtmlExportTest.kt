@@ -50,13 +50,13 @@ class HtmlExportTest {
     }
 
     @Test
-    fun `converte headings ATX e Setext sem vazar marcadores`() {
+    fun `converte headings ATX e Setext com id de slug sem vazar marcadores`() {
         val md = "# H1\n\n###### H6\n\nSetext Um\n=========\n\nSetext Dois\n-----------\n"
         val html = exportToHtml(md)
-        assertTrue("<h1>H1</h1>" in html)
-        assertTrue("<h6>H6</h6>" in html)
-        assertTrue("<h1>Setext Um</h1>" in html)
-        assertTrue("<h2>Setext Dois</h2>" in html)
+        assertTrue("<h1 id=\"h1\">H1</h1>" in html)
+        assertTrue("<h6 id=\"h6\">H6</h6>" in html)
+        assertTrue("<h1 id=\"setext-um\">Setext Um</h1>" in html)
+        assertTrue("<h2 id=\"setext-dois\">Setext Dois</h2>" in html)
     }
 
     @Test
@@ -180,11 +180,56 @@ class HtmlExportTest {
             .bufferedReader()
             .readText()
         val html = exportToHtml(ref, title = "Ref")
-        assertTrue("<h1>Título nível 1</h1>" in html)
+        assertTrue("<h1 id=\"título-nível-1\">Título nível 1</h1>" in html)
         assertTrue("<blockquote><p>Citação em bloco.\nSegunda linha da citação.</p></blockquote>" in html)
         assertTrue("<pre class=\"md-fences\"><code class=\"language-kotlin\">" in html)
         assertTrue("<th style=\"text-align: center\">Coluna B</th>" in html)
         assertTrue("<hr />" in html)
         assertTrue("<pre class=\"md-fences\"><code>bloco de código indentado</code></pre>" in html)
+    }
+
+    @Test
+    fun `converte marcadores TOC em navegação com âncoras únicas`() {
+        val md = """
+            [TOC]
+
+            # Intro
+
+            ## Intro
+
+            ### **Detalhes**
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue(".md-toc" in html)
+        assertTrue(".md-toc-content" in html)
+        assertTrue(".md-toc-item" in html)
+        assertTrue(".md-toc-h1" in html)
+        assertTrue(".md-toc-h6" in html)
+        assertTrue("<div class=\"md-toc\" role=\"navigation\"><p class=\"md-toc-content\">" in html)
+        assertTrue(
+            "<span class=\"md-toc-item md-toc-h1\"><a class=\"md-toc-inner\" href=\"#intro\">Intro</a></span>" in html,
+        )
+        assertTrue(
+            "<span class=\"md-toc-item md-toc-h2\"><a class=\"md-toc-inner\" href=\"#intro-1\">Intro</a></span>" in html,
+        )
+        assertTrue(
+            "<span class=\"md-toc-item md-toc-h3\"><a class=\"md-toc-inner\" href=\"#detalhes\">Detalhes</a></span>" in html,
+        )
+        assertTrue("<h1 id=\"intro\">Intro</h1>" in html)
+        assertTrue("<h2 id=\"intro-1\">Intro</h2>" in html)
+        assertTrue("<h3 id=\"detalhes\"><strong>Detalhes</strong></h3>" in html)
+    }
+
+    @Test
+    fun `suporta tag inline u com formatação aninhada e protege código`() {
+        val md = """
+            Texto <u>sublinhado</u>, <u>**negrito**</u>, **<u>forte</u>**, <U>==marca==</U> e `<u>literal</u>`.
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<u>sublinhado</u>" in html)
+        assertTrue("<u><strong>negrito</strong></u>" in html)
+        assertTrue("<strong><u>forte</u></strong>" in html)
+        assertTrue("<u><mark>marca</mark></u>" in html)
+        assertTrue("<code>&lt;u&gt;literal&lt;/u&gt;</code>" in html)
     }
 }
