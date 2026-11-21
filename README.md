@@ -1,70 +1,176 @@
 # JotMD
 
-Leitor e editor de Markdown nativo para Android (com shell desktop Windows em
-Compose Desktop), com UI/UX inspirada em Typora. 100% Compose, sem WebView.
-Alvo de publicação no Android: F-Droid.
+[![Release](https://img.shields.io/github/v/release/walterfr/JotMD?label=Release)](https://github.com/walterfr/JotMD/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Pride Versioning](https://img.shields.io/badge/PrideVer-0.3.0-ff69b4)](https://pridever.org/)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.1.21-7F52FF.svg)](gradle/libs.versions.toml)
+[![Android](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84.svg)](app/build.gradle.kts)
+[![Windows](https://img.shields.io/badge/Windows-Compose%20Desktop-0078D4.svg)](desktop/build.gradle.kts)
 
-## Estado
+Leitor e editor de Markdown nativo para **Android** e **Windows Desktop**, com UI/UX inspirada no [Typora](https://typora.io/). Construído **100% em Jetpack Compose / Compose Multiplatform**, sem WebView e sem telemetria.
 
-**F0–F6 em evolução.** Abre arquivos e pastas de notas (via SAF no Android ou
-diretório local no Windows) e edita blocos em Compose com motor "Escolha C",
-edição inteligente estilo Typora, multi-abas, busca na pasta e na nota, temas
-claro (`github`) e escuro (`night`), exportação HTML/PDF nativa e metadados
-prontos para F-Droid (ver detalhes em `AGENTS.md`). O roadmap original está
-em `AI_CONTEXT.md`.
+- **Android:** armazenamento exclusivo via *Storage Access Framework* (SAF), pronto para o [F-Droid](fdroid/io.github.walterfr.jotmd.yml).
+- **Windows:** shell desktop JVM compartilhando `:core-md` e os fontes de `:editor` com suporte a árvore de pasta em tempo real, atalhos e pacotes nativos (`.msi`, `.exe` e `.zip` portátil).
+
+---
+
+## Download
+
+Baixe os instaladores e checksums (`SHA256SUMS.txt`) na página de [**GitHub Releases**](https://github.com/walterfr/JotMD/releases/latest):
+
+| Plataforma | Artefato | Observação |
+|---|---|---|
+| Android 8.0+ | `jotmd-android-0.3.0.apk` | Assinado via release CI; sem permissões invasivas (`dependenciesInfo` desativado) |
+| Windows (x64) | `jotmd-windows-0.3.0.msi` | Instalador Windows padrão (WiX) |
+| Windows (x64) | `jotmd-windows-0.3.0-setup.exe` | Instalador executável |
+| Windows (x64) | `jotmd-windows-0.3.0-portable.zip` | Versão portátil (extraia e execute `JotMD.exe`) |
+
+---
 
 ## Funcionalidades
 
-- **Motor Escolha C:** `LazyColumn` de blocos onde apenas o bloco focado abre
-  em `BasicTextField` com Markdown cru e o restante renderiza formatado
-  (títulos, listas, citações, tabelas GFM alinhadas, checkboxes clicáveis,
-  cercas de código com linguagem, preview de imagens e YAML front matter inline).
-- **Edição inteligente estilo Typora:** `SmartEnter`, `SmartBackspace` em
-  cascata, `SmartTab` (`Tab`/`Shift+Tab`), `SmartPair` (auto-pair e
-  `surroundPair` em seleção) e `SmartDelete`, além de undo/redo com
-  coalescência e modo código-fonte (`isSourceMode`).
-- **Multi-abas e navegação:** abas simultâneas com estado preservado,
-  navegador de pasta raiz via SAF (`:app`) e árvore `.md` (`:desktop`),
-  `[[wikilinks]]` e `#tags` clicáveis.
-- **Busca:** busca full-text na pasta com SQLite FTS4 no Android (e busca na
-  pasta no desktop), além de busca e substituição local na nota (`DocSearch`).
-- **Temas e blocos estendidos:** tema claro `github` e tema escuro `night`,
-  GitHub Alerts (`> [!NOTE]` etc.) e marca-texto `==highlight==`.
-- **Exportação:** geração de HTML standalone (`HtmlExport`) e PDF 1.4 A4
-  nativo sem dependências externas (`PdfExport`), gravados via SAF no Android e
-  em disco no desktop.
+### Editor & Motor de Markdown ("Escolha C")
+- **Edição por bloco sem WebView:** `LazyColumn` de blocos — o bloco focado abre em `BasicTextField` com Markdown cru enquanto os demais são renderizados formatados, mantendo a string Markdown como única fonte da verdade.
+- **Edição inteligente estilo Typora:**
+  - `SmartEnter`: continua listas (`-`, `*`, `+`, `1.`, `- [ ]`), citações (`>`) e sai da estrutura em item vazio ou ao fim de front matter YAML.
+  - `SmartBackspace` em cascata: remove checkbox, marcador de lista/citação, reduz indentação antes de fundir com o bloco anterior (com proteção contra eco stale do teclado virtual Android/SwiftKey).
+  - `SmartTab` (`Tab`/`Shift+Tab`), `SmartPair` (auto-fechamento e envolvimento de seleção) e `SmartDelete` nas fronteiras de bloco.
+  - Undo/Redo por documento com coalescência temporal (~500 ms).
+- **Invariante inegociável:** `serialize(parse(texto)) == texto`, **byte a byte** (preservando separadores originais e BOM UTF-8).
 
-## Módulos
+### Sintaxe Suportada
+- Títulos ATX (`#`–`######`) e Setext (`===` / `---`)
+- Parágrafos, regras horizontais (`---`), negrito, itálico, riscado (`~~texto~~`), sublinhado (`<u>texto</u>`) e marca-texto (`==highlight==`)
+- Front matter YAML (`---` na linha 1)
+- Citações e **GitHub Alerts** (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`, `> [!CAUTION]`)
+- Listas aninhadas, ordenadas e **listas de tarefas** (`- [ ]` / `- [x]`) clicáveis
+- **Tabelas GFM** alinhadas (`:--`, `:-:`, `--:`): inserção `3x4` (`Ctrl+T` / botão `Tabela` / `⊞`), adição/remoção de linhas e colunas (até 40 colunas), reordenação (`↑Lin`, `↓Lin`, `←Col`, `→Col`) e ciclo de alinhamento
+- **Blocos de código cercado e indentado** com realce sintático (Kotlin/Java, JS/TS, Python, Rust/Go, SQL, Shell, YAML, JSON)
+- **Fórmulas LaTeX** inline (`$...$`, evitando falsos positivos com preços como `$5 e $10`) e em bloco (`$$...$$`) convertidas nativamente para Unicode
+- **Notas de rodapé** (`[^id]` clicável com salto até `[^id]: definição`) e **links por referência** (`[texto][ref]`, `[ref][]`, `[ref]`)
+- **Sumário (`[TOC]`, `{:toc}`, `[[_TOC_]]`):** widget clicável no editor, âncoras HTML e sumário estruturado no PDF
+- **WikiLinks e Tags:** `[[wikilinks|alias]]` clicáveis para abrir notas da pasta e `#tags` (corpo e YAML) clicáveis para filtrar
 
-| Módulo | O quê | Fase |
+### Modos de Leitura, Escrita & Temas
+- **5 temas do Typora:** `GitHub`, `Newsprint`, `Pixyll`, `Whitey` e `Night` (escuro).
+- **Modo Código Fonte (`</>` / `Ctrl+/`):** realce sintático em Markdown ao vivo via `VisualTransformation` (comprimento 1:1 preservando cursor) e gutter seletivo numerando apenas linha `1`, linha ativa, múltiplos de `10` e última linha.
+- **Modo Foco (`Foco`):** reduz opacidade de blocos inativos durante a digitação.
+- **Modo Máquina de Escrever (`Máquina`, Desktop):** mantém o bloco ativo centralizado na viewport.
+- **Coluna centralizada:** largura máxima `860.dp` no modo visual e `800.dp` no modo código-fonte.
+- **Painel de Índices & Contagem de Palavras:** aba `"Índices"` (Outline) na gaveta Android e sidebar Desktop, além de contagem de palavras (CJK-aware, `382` WPM para tempo estimado de leitura).
+
+### Workspace, Busca, Colagem Rica & Exportação
+- **Multi-abas e Autosave:** abas independentes (`EditorState` + histórico undo próprio), título padrão `"Sem Título"`, autosave com debounce de 1 s e flush ao sair.
+- **Gerenciamento de pasta (CRUD):**
+  - **Android (SAF):** criar nota (`+ Nota`), criar pasta (`+ Pasta`), renomear, excluir e navegar árvore via `DocumentsContract` (sem `MANAGE_EXTERNAL_STORAGE`).
+  - **Windows Desktop:** CRUD seguro contra *path traversal*, atualização automática em tempo real via `DirectoryTreeWatcher` (`WatchService`) e **Quick Open (`Ctrl+P`)**.
+- **Busca Full-Text e Busca na Nota:**
+  - **Na pasta:** SQLite FTS4 incremental com dobra de acentos no Android (`"acao"` encontra `"ação"`), trecho destacado e busca NFD no Desktop.
+  - **Na nota (`Ctrl+F`):** diferenciação `Aa` (maiúsculas/minúsculas), palavra inteira `[ab]`, expressão regular `.*`, substituição unitária / global e **destaque visual das ocorrências** no editor (diferenciando ocorrência ativa).
+- **Colagem Rica (`Colar+` / `Ctrl+Shift+V`):**
+  - Converte `text/html` da área de transferência para Markdown GFM via `HtmlToMarkdown` puro;
+  - No **Desktop**, cola imagens do clipboard salvando PNG em `typora-user-images/` e inserindo `![imagem](...)` automático; no **Android**, aceita URIs de imagem e HTML/Markdown.
+- **Exportação:**
+  - **HTML** autocontido (`exportToHtml`) compatível com classes `.typora-export`, `[TOC]` com âncoras, tema claro/escuro, LaTeX, alertas e notas de rodapé;
+  - **PDF 1.4 nativo** em folha A4 (`exportToPdf`) sem dependências externas, com `[TOC]`, paginação automática, alertas coloridos, tabelas, links/notas de rodapé e fallback ASCII para matemática em `WinAnsi`.
+
+---
+
+## Atalhos de Teclado
+
+| Atalho | Ação | Contexto |
 |---|---|---|
-| `:core-md` | Parsing, serialização, `FrontMatter`, `Wikilinks`, `Tags`, `DocIndex`, `Alerts`, `DocSearch`, `HtmlExport` e `PdfExport`. Kotlin puro, zero Android, testável em JVM. | F0, F5–F6 ✅ |
-| `:editor` | Renderização e edição de blocos em Compose (`SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`), temas claro/escuro (`github`/`night`), GitHub Alerts, `==highlight==` e `isSourceMode`. | F1–F6 ✅ |
-| `:app` | Shell Android: SAF (arquivo e pasta raiz), multi-abas (`TabManager`), autosave, busca FTS4, busca na nota, tema escuro e export HTML/PDF (empacotamento F-Droid em `fastlane/` e `fdroid/`). | F1–F6 ✅ |
-| `:desktop` | Shell Windows (Compose Desktop JVM) compartilhando `:core-md` e fontes comuns de `:editor`: abas, árvore `.md`, busca na pasta e na nota, tema escuro e export HTML/PDF. | F5–F6 ✅ |
+| `Ctrl+B` / `Ctrl+I` | Negrito (`**`) / Itálico (`*`) | Bloco focado |
+| `Ctrl+U` / `Ctrl+K` | Sublinhado (`<u>`) / Link (`[]()`) | Bloco focado |
+| `Ctrl+T` | Inserir tabela `3x4` | Editor / Desktop |
+| `Ctrl+/` | Alternar Modo Código Fonte (`</>`) | Editor / Desktop |
+| `Ctrl+Shift+V` | Colar+ (Imagem PNG / HTML → MD / Markdown) | Desktop |
+| `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` | Desfazer / Refazer | Bloco focado |
+| `Ctrl+F` / `Esc` | Buscar na nota / Fechar barra ou Quick Open | Desktop |
+| `Ctrl+P` | Quick Open na pasta e abas abertas | Desktop |
+| `Ctrl+S` | Salvar arquivo ativo (ou *Salvar como*) | Desktop |
+| `Tab` / `Shift+Tab` | Indentar / desindentar lista e bloco | Bloco focado |
+| `↑` / `↓` | Navegar para o bloco anterior / seguinte nas bordas | Bloco focado |
 
-## A invariante
+---
+
+## Arquitetura e Módulos
+
+```
+core-md  ──▶  editor  ──▶  app (Android SAF + FTS4)
+    │            │
+    └────────────┴──────▶  desktop (Windows Compose Desktop)
+```
+
+| Módulo | Tecnologia | Responsabilidades |
+|---|---|---|
+| [`:core-md`](core-md/) | Kotlin puro (zero Android) | `Block`, `DocState`, `MdParser`, `MdSerializer`, `FrontMatter`, `Wikilinks`, `Tags`, `DocIndex`, `Scan`, `Alerts`, `DocOutline`, `DocStats`, `DocRefs`, `MathRender`, `HtmlToMarkdown`, `DocSearch`, `HtmlExport`, `PdfExport` |
+| [`:editor`](editor/) | Compose + JVM comum | `EditorState`, `EditorScreen`, `DocumentView`, `BlockEditor`, `BlockRenderer`, `BlockParts`, `InlineText`, `Toolbar`, `ImagePreview` (`expect`/`actual`), `MdTheme`, `editor/ops/*` (`BlockOps`, `UndoStack`, `TaskOps`, `TableOps`, `SourceGutter`, `SyntaxHighlight`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`) |
+| [`:app`](app/) | Android (`compileSdk 35`, `minSdk 26`) | `MainActivity`, `TabManager`, `FileSession`, `FileBrowser` (SAF CRUD + `DocumentsContract`), `SearchIndex` (SQLite FTS4) |
+| [`:desktop`](desktop/) | Compose Desktop (JVM 17) | `Main`, `DesktopWorkspace` (`DesktopTabManager`, árvore + CRUD + `DirectoryTreeWatcher`, `filterQuickOpen`, PNG em `typora-user-images/`), `ImagePreview.desktop` |
+
+### Invariante de Roundtrip
 
 ```kotlin
-serialize(parse(texto)) == texto   // byte a byte, para todo texto
+serialize(parse(texto)) == texto   // byte a byte, para qualquer entrada
 ```
 
-Quebrar isso corrompe o arquivo do usuário em silêncio. `parse` particiona o
-texto original em fatias que não se sobrepõem e cobrem tudo, então a invariante
-vale por construção — `RoundtripTest` a guarda, não a produz.
+`MdParser.parse` particiona a entrada em fatias contíguas sem sobreposição cobrindo `DocState.leading` + `(source + trailing)` de cada `Block`. A invariante é garantida por construção e protegida por [`RoundtripTest`](core-md/src/test/kotlin/io/github/walterfr/jotmd/core/RoundtripTest.kt).
 
-## Build
+---
+
+## Build, Testes e Desenvolvimento
+
+### Pré-requisitos
+- **JDK 17**
+- **Android SDK** (`compileSdk 35`, `minSdk 26`) para compilar `:app`
+
+### Comandos
 
 ```bash
+# Rodar todas as suítes de teste JVM/unitários (:core-md, :editor, :app, :desktop) e gerar APK debug
 ./gradlew test assembleDebug
+
+# Instalar APK debug via adb no aparelho Android conectado
+./gradlew :app:installDebug
+
+# Executar o aplicativo Windows / Compose Desktop diretamente
 ./gradlew :desktop:run
+
+# Empacotar distribuível e instaladores Windows (.msi / .exe / imagem portátil)
+./gradlew :desktop:createDistributable :desktop:packageMsi :desktop:packageExe "-PdesktopPackageVersion=0.3.0"
 ```
 
-Requer JDK 17 e o Android SDK (`compileSdk 35`, `minSdk 26`).
+*(No PowerShell do Windows, use `.\gradlew.bat` e mantenha parâmetros `-P...=...` entre aspas.)*
 
-## Documentos
+### Releases Automatizadas (CI/CD)
+Tags `v*` acionam [`.github/workflows/release.yml`](.github/workflows/release.yml):
+1. Roda todos os testes e gera o APK Release (`secrets.KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, ou assinatura de fallback `debug` fora de releases assinadas).
+2. Empacota instaladores Windows `.msi`, `.exe` e `.zip` portátil em runner `windows-latest`.
+3. Gera `SHA256SUMS.txt` e publica a Release no GitHub.
+4. Quando construído pelo servidor do F-Droid (sem variáveis de assinatura no ambiente), `app/build.gradle.kts` mantém `dependenciesInfo` desligado e assinatura neutra para builds reprodutíveis.
 
-- `AGENTS.md` — estado atual, regras e armadilhas para agentes de código.
-- `AI_CONTEXT.md` — decisões de arquitetura e roadmap original.
-- `DESIGN.md` — tokens visuais e modelo de foco medidos no Typora real.
-- `docs/typora-ref.md` — documento de referência; também é o corpus de teste.
+---
+
+## Versionamento — Pride Versioning 🏳️‍🌈
+
+O JotMD adota o [**Pride Versioning**](https://pridever.org/) (`PROUD.DEFAULT.SHAME`):
+
+- **PROUD (`X`):** incrementado quando sai algo de que realmente temos orgulho.
+- **DEFAULT (`Y`):** entregas e marcos normais do projeto (como `0.3.0`, fechando a paridade de recursos com o Typora).
+- **SHAME (`Z`):** correções apressadas de bugs embaraçosos que deixamos passar.
+
+---
+
+## Documentação Adicional
+
+- [`AGENTS.md`](AGENTS.md) — estado atual do projeto, módulos, regras de trabalho e armadilhas já resolvidas.
+- [`DESIGN.md`](DESIGN.md) — tokens visuais medidos no Typora, arquitetura de foco, CSS e matriz de paridade.
+- [`AI_CONTEXT.md`](AI_CONTEXT.md) — decisões originais de arquitetura e histórico de roadmap.
+- [`docs/typora-ref.md`](docs/typora-ref.md) — documento de referência usado nos testes visuais e de roundtrip.
+
+---
+
+## Licença
+
+Distribuído sob a licença **MIT**. Veja [`LICENSE`](LICENSE) para detalhes.

@@ -2,6 +2,7 @@ package io.github.walterfr.jotmd.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DocSearchTest {
@@ -108,5 +109,63 @@ class DocSearchTest {
         assertEquals("abcde", replaceRangeInText("abcde", 3..1, "X"))
         assertEquals("abcde", replaceRangeInText("abcde", IntRange.EMPTY, "X"))
         assertEquals("", replaceRangeInText("", 0..0, "X"))
+    }
+
+    @Test
+    fun `isValidSearchRegex valida padrões válidos, vazios e inválidos`() {
+        assertTrue(isValidSearchRegex(""))
+        assertTrue(isValidSearchRegex("""^#\s+.*$"""))
+        assertTrue(isValidSearchRegex("""\d{2,4}-(foo|bar)+"""))
+        assertFalse(isValidSearchRegex("[sem-fechar"))
+        assertFalse(isValidSearchRegex("(grupo"))
+        assertFalse(isValidSearchRegex("*repetidor"))
+    }
+
+    @Test
+    fun `busca regex suporta MULTILINE, caseSensitive, wholeWord e falha segura`() {
+        val text = "# Título\n\n- item 1\n- ITEM 22\n- item 333\n\nba aa aaa"
+        val doc = parse(text)
+        assertEquals(text, serialize(doc))
+
+        val multiline = findInDocument(doc, """^- item \d+$""", caseSensitive = false, regex = true)
+        assertEquals(3, multiline.size)
+        for (hit in multiline) {
+            assertEquals(doc.blocks[hit.blockIndex].source.substring(hit.rangeInBlock), text.substring(hit.globalRange))
+        }
+
+        val caseOnly = findInDocument(doc, """^- ITEM \d+$""", caseSensitive = true, regex = true)
+        assertEquals(1, caseOnly.size)
+        assertEquals("- ITEM 22", doc.blocks[caseOnly.single().blockIndex].source.substring(caseOnly.single().rangeInBlock))
+
+        val wholeRegex = findInDocument(doc, """a+""", wholeWord = true, regex = true)
+        assertEquals(listOf("aa", "aaa"), wholeRegex.map { doc.blocks[it.blockIndex].source.substring(it.rangeInBlock) })
+
+        assertEquals(emptyList(), findInDocument(doc, "[invalido", regex = true))
+    }
+
+    @Test
+    fun `busca e substituição regex evitam loop infinito em match vazio e preservam cifrão literal`() {
+        val doc = parse("baab")
+        val hits = findInDocument(doc, "a*", regex = true)
+        assertEquals(listOf(1..2), hits.map { it.rangeInBlock })
+        assertEquals(emptyList(), findInDocument(doc, "^", regex = true))
+        assertEquals(emptyList(), findInDocument(doc, """\b""", regex = true))
+
+        assertEquals("bXb" to 1, replaceAllInText("baab", "a*", "X", regex = true))
+        assertEquals("abc" to 0, replaceAllInText("abc", "^", "X", regex = true))
+        assertEquals("abc" to 0, replaceAllInText("abc", "(invalido", "X", regex = true))
+
+        val (priceText, priceCount) = replaceAllInText("Item 10 e 20", """\d+""", "\$100", regex = true)
+        assertEquals("Item \$100 e \$100", priceText)
+        assertEquals(2, priceCount)
+
+        val (linesText, linesCount) = replaceAllInText(
+            "1. um\n2. dois",
+            """^\d+\.\s+""",
+            "- ",
+            regex = true,
+        )
+        assertEquals("- um\n- dois", linesText)
+        assertEquals(2, linesCount)
     }
 }

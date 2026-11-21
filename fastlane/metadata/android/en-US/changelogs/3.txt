@@ -1,0 +1,6 @@
+Release 0.3.0 (Pride Versioning):
+- Regex find (.*) and live match highlighting in editor blocks
+- Syntax highlighting for fenced code blocks and source mode
+- Reference links, footnotes ([^id]), and LaTeX math ($...$/$$...$$)
+- 3x4 table insert, column reordering, and rich paste (HTML→MD / image)
+- PDF [TOC] outline and note/folder CRUD on Android (SAF) and Desktop

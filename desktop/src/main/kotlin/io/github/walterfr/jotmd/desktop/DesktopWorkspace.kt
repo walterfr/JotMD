@@ -6,12 +6,21 @@ import androidx.compose.runtime.setValue
 import io.github.walterfr.jotmd.core.docIndex
 import io.github.walterfr.jotmd.core.tagsOf
 import io.github.walterfr.jotmd.editor.EditorState
+import java.awt.Image
+import java.awt.Toolkit
+import java.awt.datatransfer.Clipboard
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
+import java.awt.image.BufferedImage
+import java.awt.image.RenderedImage
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.ClosedWatchServiceException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileSystems
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardWatchEventKinds
@@ -19,8 +28,12 @@ import java.nio.file.WatchKey
 import java.nio.file.WatchService
 import java.nio.file.attribute.BasicFileAttributes
 import java.text.Normalizer
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.imageio.ImageIO
+import javax.swing.ImageIcon
 
 /** Aba aberta no workspace desktop. */
 class DesktopTab(
@@ -182,6 +195,50 @@ class DesktopTabManager {
         }
         return tabs.none { it.saveFailed }
     }
+
+    /**
+     * Atualiza caminho e título de abas que apontam para [oldPath] ou estão sob
+     * [oldPath] (no caso de pasta renomeada), normalizando caminhos.
+     */
+    fun updateRenamedPath(oldPath: Path, newPath: Path) {
+        val normOld = oldPath.toAbsolutePath().normalize()
+        val normNew = newPath.toAbsolutePath().normalize()
+        for (tab in tabs) {
+            val tabFile = tab.file?.toAbsolutePath()?.normalize() ?: continue
+            val updated = when {
+                tabFile == normOld -> normNew
+                tabFile.startsWith(normOld) -> normNew.resolve(normOld.relativize(tabFile)).normalize()
+                else -> null
+            } ?: continue
+            tab.file = updated
+            tab.title = updated.fileName?.toString() ?: updated.toString()
+        }
+    }
+
+    /**
+     * Fecha abas cujo arquivo seja [removedPath] ou esteja dentro dessa pasta,
+     * sem gravar de volta o arquivo removido; abre `"Sem Título"` se todas fecharem.
+     */
+    fun closeRemovedPath(removedPath: Path) {
+        val normRemoved = removedPath.toAbsolutePath().normalize()
+        val remaining = tabs.filterNot { tab ->
+            val tabFile = tab.file?.toAbsolutePath()?.normalize() ?: return@filterNot false
+            tabFile == normRemoved || tabFile.startsWith(normRemoved)
+        }
+        if (remaining.size == tabs.size) return
+        if (remaining.isEmpty()) {
+            tabs = emptyList()
+            activeTabId = null
+            newEmptyTab()
+            return
+        }
+        val prevActiveIndex = tabs.indexOfFirst { it.id == activeTabId }
+        tabs = remaining
+        if (remaining.none { it.id == activeTabId }) {
+            val nextIndex = if (prevActiveIndex >= 0) prevActiveIndex.coerceAtMost(remaining.lastIndex) else 0
+            activeTabId = remaining[nextIndex].id
+        }
+    }
 }
 
 /** Entrada achatada da árvore de documentos da pasta raiz no desktop. */
@@ -207,12 +264,13 @@ private class DirNode(val path: Path, val relativePath: String) {
 /**
  * Lista pastas e arquivos `.md`/`.markdown` em [root], ordenados com pastas primeiro
  * e depois arquivos em ordem alfabética sem caixa. Ignora entradas ocultas começando com `.`
- * (ex.: `.git`) e omite pastas sem nenhum markdown dentro.
+ * (ex.: `.git`). Quando [includeEmptyDirs] é `false` (padrão), omite pastas sem markdown.
  */
-fun listDesktopTree(root: Path): List<DesktopDocEntry> {
+fun listDesktopTree(root: Path, includeEmptyDirs: Boolean = false): List<DesktopDocEntry> {
     if (!Files.isDirectory(root)) return emptyList()
     val normRoot = root.toAbsolutePath().normalize()
     val mdFiles = ArrayList<Path>()
+    val allDirs = ArrayList<Path>()
 
     Files.walkFileTree(
         normRoot,
@@ -220,6 +278,9 @@ fun listDesktopTree(root: Path): List<DesktopDocEntry> {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
                 if (dir != normRoot && dir.fileName.toString().startsWith(".")) {
                     return FileVisitResult.SKIP_SUBTREE
+                }
+                if (includeEmptyDirs && dir != normRoot) {
+                    allDirs.add(dir)
                 }
                 return FileVisitResult.CONTINUE
             }
@@ -238,6 +299,17 @@ fun listDesktopTree(root: Path): List<DesktopDocEntry> {
     )
 
     val rootNode = DirNode(normRoot, "")
+    if (includeEmptyDirs) {
+        for (dir in allDirs) {
+            val rel = normRoot.relativize(dir)
+            var node = rootNode
+            for (i in 0 until rel.nameCount) {
+                val seg = rel.getName(i).toString()
+                val childRel = if (node.relativePath.isEmpty()) seg else "${node.relativePath}/$seg"
+                node = node.dirs.getOrPut(seg) { DirNode(node.path.resolve(seg), childRel) }
+            }
+        }
+    }
     for (file in mdFiles) {
         val rel = normRoot.relativize(file)
         var node = rootNode
@@ -710,4 +782,232 @@ class DirectoryTreeWatcher(
             runCatching { worker.join(1000) }
         }
     }
+}
+
+private val INVALID_ENTRY_CHARS = Regex("""[<>:"|?*\u0000-\u001F]""")
+private val IMAGE_TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS")
+private val HTML_STRING_FLAVOR: DataFlavor? = runCatching {
+    DataFlavor("text/html;class=java.lang.String")
+}.getOrNull()
+
+/**
+ * Higieniza o nome de uma nota ou pasta para uso seguro dentro de um diretório pai,
+ * bloqueando separadores (`/`/`\`), referências relativas (`.`/`..`) e nomes ocultos.
+ * Retorna string vazia quando inválido.
+ */
+fun sanitizeDesktopEntryName(rawName: String, ensureMarkdownExtension: Boolean): String {
+    val trimmed = rawName.trim()
+    if (trimmed.isEmpty()) return ""
+    if ('/' in trimmed || '\\' in trimmed || '\u0000' in trimmed) return ""
+    if (trimmed == "." || trimmed == ".." || trimmed.startsWith(".")) return ""
+
+    val cleaned = INVALID_ENTRY_CHARS.replace(trimmed, "").trim().trimEnd('.', ' ')
+    if (cleaned.isEmpty() || cleaned == "." || cleaned == ".." || cleaned.startsWith(".")) return ""
+
+    if (!ensureMarkdownExtension) return cleaned
+    if (isMarkdownName(cleaned)) {
+        val stem = cleaned.substringBeforeLast('.').trim()
+        return if (stem.isEmpty()) "" else cleaned
+    }
+    return "$cleaned.md"
+}
+
+private fun resolveSafeChild(
+    parentDir: Path,
+    rawName: String,
+    ensureMarkdownExtension: Boolean,
+): Path? {
+    val normParent = parentDir.toAbsolutePath().normalize()
+    if (!Files.isDirectory(normParent)) return null
+    val cleanName = sanitizeDesktopEntryName(rawName, ensureMarkdownExtension)
+    if (cleanName.isEmpty()) return null
+    val target = normParent.resolve(cleanName).normalize()
+    return if (target.parent == normParent) target else null
+}
+
+/**
+ * Cria um arquivo Markdown vazio em [parentDir] sem sobrescrever se já existir.
+ * Devolve `null` para nomes inválidos, traversal ou colisão.
+ */
+fun createDesktopMarkdownFile(parentDir: Path, rawName: String): Path? {
+    val target = resolveSafeChild(parentDir, rawName, ensureMarkdownExtension = true) ?: return null
+    return try {
+        Files.createFile(target)
+    } catch (_: FileAlreadyExistsException) {
+        null
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Cria uma subpasta em [parentDir] sem sobrescrever ou escapar do diretório pai.
+ */
+fun createDesktopFolder(parentDir: Path, rawName: String): Path? {
+    val target = resolveSafeChild(parentDir, rawName, ensureMarkdownExtension = false) ?: return null
+    if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return null
+    return try {
+        Files.createDirectory(target)
+    } catch (_: FileAlreadyExistsException) {
+        null
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Renomeia [target] dentro do próprio diretório pai, garantindo extensão Markdown
+ * para arquivos e evitando sobrescrita ou traversal por `/`/`\`.
+ */
+fun renameDesktopEntry(target: Path, rawNewName: String): Path? {
+    val normTarget = target.toAbsolutePath().normalize()
+    val parent = normTarget.parent ?: return null
+    if (Files.notExists(normTarget, LinkOption.NOFOLLOW_LINKS)) return null
+    val isDir = Files.isDirectory(normTarget, LinkOption.NOFOLLOW_LINKS)
+    val cleanName = sanitizeDesktopEntryName(rawNewName, ensureMarkdownExtension = !isDir)
+    if (cleanName.isEmpty()) return null
+    if (normTarget.fileName?.toString() == cleanName) return null
+    val dest = parent.resolve(cleanName).normalize()
+    if (dest.parent != parent) return null
+    if (dest != normTarget && Files.exists(dest, LinkOption.NOFOLLOW_LINKS)) return null
+    return try {
+        Files.move(normTarget, dest)
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/** Exclui [target] (arquivo ou pasta recursivamente via [Files.walkFileTree]) se existir. */
+fun deleteDesktopEntry(target: Path): Boolean {
+    val normTarget = target.toAbsolutePath().normalize()
+    if (normTarget.parent == null || Files.notExists(normTarget, LinkOption.NOFOLLOW_LINKS)) return false
+    return try {
+        Files.walkFileTree(
+            normTarget,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    Files.deleteIfExists(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                    if (exc != null) throw exc
+                    Files.deleteIfExists(dir)
+                    return FileVisitResult.CONTINUE
+                }
+            },
+        )
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
+
+/**
+ * Grava [image] como PNG em `<base>/typora-user-images/image-<timestamp>.png`,
+ * usando `activeFile?.parent ?: rootDir`, e devolve URI `file:///...` compatível
+ * com [io.github.walterfr.jotmd.editor.resolveLocalImageFile].
+ */
+fun saveClipboardImagePng(
+    image: RenderedImage,
+    activeFile: Path?,
+    rootDir: Path?,
+    timestamp: String = IMAGE_TIMESTAMP_FORMAT.format(LocalDateTime.now()),
+): String? {
+    val baseDir = activeFile?.toAbsolutePath()?.normalize()?.parent
+        ?: rootDir?.toAbsolutePath()?.normalize()
+        ?: return null
+    val imagesDir = baseDir.resolve("typora-user-images")
+    val safeTs = timestamp.replace(Regex("[^A-Za-z0-9_-]"), "").ifEmpty { "0" }
+    return try {
+        Files.createDirectories(imagesDir)
+        var outFile = imagesDir.resolve("image-$safeTs.png")
+        var suffix = 1
+        while (Files.exists(outFile)) {
+            outFile = imagesDir.resolve("image-$safeTs-$suffix.png")
+            suffix++
+        }
+        val wrote = ImageIO.write(image, "png", outFile.toFile())
+        if (!wrote) return null
+        outFile.toUri().toString()
+    } catch (_: Exception) {
+        null
+    }
+}
+
+internal fun toRenderedImage(image: Image): RenderedImage? {
+    if (image is RenderedImage) return image
+    var width = image.getWidth(null)
+    var height = image.getHeight(null)
+    if (width <= 0 || height <= 0) {
+        val icon = ImageIcon(image)
+        width = icon.iconWidth
+        height = icon.iconHeight
+    }
+    if (width <= 0 || height <= 0) return null
+    val buffered = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val g = buffered.createGraphics()
+    try {
+        g.drawImage(image, 0, 0, null)
+    } finally {
+        g.dispose()
+    }
+    return buffered
+}
+
+/** Conteúdo extraído da área de transferência em ordem de prioridade para colagem rica. */
+sealed interface ClipboardPayload {
+    data class Image(val image: RenderedImage) : ClipboardPayload
+    data class Html(val html: String) : ClipboardPayload
+    data class Text(val text: String) : ClipboardPayload
+    data object Empty : ClipboardPayload
+}
+
+/**
+ * Lê [clipboard] priorizando imagem, depois HTML (`text/html`), depois texto puro.
+ */
+fun readClipboardPayload(
+    clipboard: Clipboard = Toolkit.getDefaultToolkit().systemClipboard,
+): ClipboardPayload {
+    val contents = runCatching { clipboard.getContents(null) }.getOrNull() ?: return ClipboardPayload.Empty
+
+    if (contents.isDataFlavorSupported(DataFlavor.imageFlavor)) {
+        val raw = runCatching { contents.getTransferData(DataFlavor.imageFlavor) }.getOrNull()
+        val rendered = when (raw) {
+            is RenderedImage -> raw
+            is Image -> toRenderedImage(raw)
+            else -> null
+        }
+        if (rendered != null) return ClipboardPayload.Image(rendered)
+    }
+
+    val html = readHtmlFromTransferable(contents)
+    if (!html.isNullOrBlank()) return ClipboardPayload.Html(html)
+
+    if (contents.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+        val text = runCatching { contents.getTransferData(DataFlavor.stringFlavor) as? String }.getOrNull()
+        if (!text.isNullOrEmpty()) return ClipboardPayload.Text(text)
+    }
+
+    return ClipboardPayload.Empty
+}
+
+private fun readHtmlFromTransferable(contents: Transferable): String? {
+    val preferred = buildList {
+        add(DataFlavor.fragmentHtmlFlavor)
+        add(DataFlavor.selectionHtmlFlavor)
+        HTML_STRING_FLAVOR?.let(::add)
+        add(DataFlavor.allHtmlFlavor)
+        for (flavor in contents.transferDataFlavors) {
+            if (flavor.isMimeTypeEqual("text/html") && flavor.representationClass == String::class.java) {
+                add(flavor)
+            }
+        }
+    }.distinct()
+    for (flavor in preferred) {
+        if (!contents.isDataFlavorSupported(flavor)) continue
+        val html = runCatching { contents.getTransferData(flavor) as? String }.getOrNull()
+        if (!html.isNullOrBlank()) return html
+    }
+    return null
 }

@@ -34,7 +34,9 @@ private val WIN_ANSI: Charset = Charset.forName("windows-1252")
  */
 fun exportToPdf(markdown: String, title: String = "Documento"): ByteArray {
     val doc = parse(markdown)
-    val writer = PdfWriter()
+    val outline = outlineOf(doc)
+    val refs = docRefsOf(doc)
+    val writer = PdfWriter(outline, refs)
     for (block in doc.blocks) {
         writer.renderBlock(block, MARGIN_LEFT, CONTENT_WIDTH, quoteTextStyle = null)
     }
@@ -95,7 +97,10 @@ private data class BoxLine(
 
 private enum class PdfTableAlign { LEFT, CENTER, RIGHT }
 
-private class PdfWriter {
+private class PdfWriter(
+    private val outline: List<OutlineEntry> = emptyList(),
+    private val refs: DocRefs = DocRefs.EMPTY,
+) {
     private val encoder: CharsetEncoder = WIN_ANSI.newEncoder()
         .onMalformedInput(CodingErrorAction.REPLACE)
         .onUnmappableCharacter(CodingErrorAction.REPLACE)
@@ -123,11 +128,91 @@ private class PdfWriter {
             BlockType.CODE_INDENTED -> renderCodeIndented(block.source, left, availWidth)
             BlockType.TABLE -> renderTable(block.source, left, availWidth)
             BlockType.HORIZONTAL_RULE -> renderHorizontalRule(left, availWidth)
-            BlockType.LINK_DEFINITION -> Unit
-            BlockType.PARAGRAPH, BlockType.OTHER, BlockType.HTML -> {
-                val style = quoteTextStyle ?: QuoteTextStyle(PdfFont.REGULAR, COLOR_DARK)
-                renderParagraph(cleanInline(block.source), left, availWidth, style.font, 11f, 16f, style.color)
+            BlockType.LINK_DEFINITION ->
+                if (isFootnoteDefinitionBlock(block.source)) {
+                    renderFootnoteDefinitions(block.source, left, availWidth, quoteTextStyle)
+                }
+            BlockType.PARAGRAPH -> when {
+                isTocMarker(block.source) -> renderToc(left, availWidth)
+                else -> {
+                    val mathExpr = extractMathBlock(block.source)
+                    when {
+                        mathExpr != null -> renderMathBlock(mathExpr, left, availWidth)
+                        isFootnoteDefinitionBlock(block.source) ->
+                            renderFootnoteDefinitions(block.source, left, availWidth, quoteTextStyle)
+                        else -> {
+                            val style = quoteTextStyle ?: QuoteTextStyle(PdfFont.REGULAR, COLOR_DARK)
+                            renderParagraph(cleanInline(block.source, refs), left, availWidth, style.font, 11f, 16f, style.color)
+                        }
+                    }
+                }
             }
+            BlockType.OTHER, BlockType.HTML -> {
+                if (isFootnoteDefinitionBlock(block.source)) {
+                    renderFootnoteDefinitions(block.source, left, availWidth, quoteTextStyle)
+                } else {
+                    val style = quoteTextStyle ?: QuoteTextStyle(PdfFont.REGULAR, COLOR_DARK)
+                    renderParagraph(cleanInline(block.source, refs), left, availWidth, style.font, 11f, 16f, style.color)
+                }
+            }
+        }
+    }
+
+    private fun renderToc(left: Float, availWidth: Float) {
+        val titleHeight = 17f
+        ensureLineSpace(titleHeight)
+        drawText(normalizeForPdf("Índices", encoder), left, y - 12f * 0.85f, PdfFont.BOLD, 12f, COLOR_DARK)
+        advanceY(titleHeight)
+        if (outline.isNotEmpty()) {
+            addGap(2f)
+            val fontSize = 10.5f
+            val lineHeight = 14.5f
+            val maxIndent = (availWidth - 40f).coerceAtLeast(0f)
+            for (entry in outline) {
+                val indent = (((entry.level - 1).coerceAtLeast(0)) * 12f).coerceAtMost(maxIndent)
+                val entryLeft = left + indent
+                val entryWidth = (availWidth - indent).coerceAtLeast(40f)
+                val font = if (entry.level == 1) PdfFont.BOLD else PdfFont.REGULAR
+                val color = if (entry.level == 6) COLOR_MUTED else COLOR_DARK
+                val wrapped = wrapText(normalizeForPdf(entry.title, encoder), font, fontSize, entryWidth)
+                    .ifEmpty { listOf("") }
+                for (line in wrapped) {
+                    ensureLineSpace(lineHeight)
+                    drawText(line, entryLeft, y - fontSize * 0.85f, font, fontSize, color)
+                    advanceY(lineHeight)
+                }
+            }
+        }
+        addGap(8f)
+    }
+
+    private fun renderMathBlock(expr: String, left: Float, availWidth: Float) {
+        val ascii = asciiMathFallback(renderLatexToUnicode(expr))
+        val safe = normalizeForPdf(ascii, encoder)
+        val fontSize = 11f
+        val lineHeight = 15.5f
+        val padX = 12f
+        val padY = 8f
+        val innerWidth = (availWidth - 2 * padX).coerceAtLeast(40f)
+        val wrapped = wrapText(safe, PdfFont.OBLIQUE, fontSize, innerWidth).ifEmpty { listOf("") }
+        val lines = wrapped.map { BoxLine(it, PdfFont.OBLIQUE, fontSize, lineHeight, COLOR_DARK) }
+        drawBoxedLines(lines, left, availWidth, COLOR_CODE_BG, padX, padY, centered = true)
+        addGap(8f)
+    }
+
+    private fun renderFootnoteDefinitions(
+        source: String,
+        left: Float,
+        availWidth: Float,
+        quoteTextStyle: QuoteTextStyle?,
+    ) {
+        val font = quoteTextStyle?.font ?: PdfFont.REGULAR
+        val color = quoteTextStyle?.color ?: COLOR_MUTED
+        for ((id, content) in parseFootnoteDefinitions(source)) {
+            val num = refs.footnoteNumber(id)?.toString() ?: id
+            val cleaned = cleanInline(content, refs)
+            val text = if (cleaned.isEmpty()) "[$num]" else "[$num] $cleaned"
+            renderParagraph(text, left, availWidth, font, 10f, 14f, color)
         }
     }
 
@@ -164,7 +249,7 @@ private class PdfWriter {
             ?: node
             ?: root
         val text = buildString {
-            appendInlineChildren(contentNode, PdfInlineCtx.of(source, root), emptySet(), softBreakAsSpace = true)
+            appendInlineChildren(contentNode, PdfInlineCtx.of(source, root, refs), emptySet(), softBreakAsSpace = true)
         }.trim()
 
         val fontSize = when (level) {
@@ -229,7 +314,7 @@ private class PdfWriter {
             val stripped = source.lines().joinToString("\n") { it.replaceFirst(QUOTE_LINE_PREFIX, "") }
             val style = QuoteTextStyle(PdfFont.OBLIQUE, COLOR_MUTED)
             if (stripped == source) {
-                renderParagraph(cleanInline(source), innerLeft, innerWidth, style.font, 11f, 16f, style.color)
+                renderParagraph(cleanInline(source, refs), innerLeft, innerWidth, style.font, 11f, 16f, style.color)
             } else {
                 val innerBlocks = parse(stripped, frontMatter = false).blocks
                 for (b in innerBlocks) {
@@ -250,13 +335,13 @@ private class PdfWriter {
         quoteTextStyle: QuoteTextStyle?,
     ) {
         val root = astOf(source)
-        val ctx = PdfInlineCtx.of(source, root)
+        val ctx = PdfInlineCtx.of(source, root, refs)
         val listNode = root.children.firstOrNull {
             it.type == MarkdownElementTypes.UNORDERED_LIST || it.type == MarkdownElementTypes.ORDERED_LIST
         }
         if (listNode == null) {
             val style = quoteTextStyle ?: QuoteTextStyle(PdfFont.REGULAR, COLOR_DARK)
-            renderParagraph(cleanInline(source), left, availWidth, style.font, 11f, 16f, style.color)
+            renderParagraph(cleanInline(source, refs), left, availWidth, style.font, 11f, 16f, style.color)
             return
         }
         renderListNode(listNode, ctx, level = 0, baseLeft = left, rightEdge = left + availWidth, quoteTextStyle = quoteTextStyle)
@@ -442,6 +527,7 @@ private class PdfWriter {
         bgColor: Rgb,
         padX: Float,
         padY: Float,
+        centered: Boolean = false,
     ) {
         if (lines.isEmpty()) return
         var idx = 0
@@ -466,7 +552,13 @@ private class PdfWriter {
             var curY = y - padY
             for (i in idx until endIdx) {
                 val line = lines[i]
-                drawText(line.text, left + padX, curY - line.fontSize * 0.85f, line.font, line.fontSize, line.color)
+                val textX = if (centered) {
+                    val w = measureWidth(line.text, line.font, line.fontSize)
+                    maxOf(left + padX, left + (availWidth - w) / 2f)
+                } else {
+                    left + padX
+                }
+                drawText(line.text, textX, curY - line.fontSize * 0.85f, line.font, line.fontSize, line.color)
                 curY -= line.lineHeight
             }
             advanceY(boxHeight)
@@ -480,7 +572,7 @@ private class PdfWriter {
         val tableNode = root.children.firstOrNull { it.type == GFMElementTypes.TABLE }
         val lines = source.lineSequence().filter { it.isNotBlank() }.toList()
         if (tableNode == null || lines.size < 2) {
-            renderParagraph(cleanInline(source), left, availWidth, PdfFont.REGULAR, 11f, 16f, COLOR_DARK)
+            renderParagraph(cleanInline(source, refs), left, availWidth, PdfFont.REGULAR, 11f, 16f, COLOR_DARK)
             return
         }
 
@@ -490,7 +582,7 @@ private class PdfWriter {
             ?.map { it.getTextInNode(source).toString().trim() }
             ?: splitTableCells(lines[0])
         if (headers.isEmpty()) {
-            renderParagraph(cleanInline(source), left, availWidth, PdfFont.REGULAR, 11f, 16f, COLOR_DARK)
+            renderParagraph(cleanInline(source, refs), left, availWidth, PdfFont.REGULAR, 11f, 16f, COLOR_DARK)
             return
         }
 
@@ -524,7 +616,7 @@ private class PdfWriter {
 
         fun prepareRow(cells: List<String>, font: PdfFont): Pair<List<List<String>>, Float> {
             val wrapped = cells.map { raw ->
-                val cleaned = normalizeForPdf(cleanInline(raw), encoder)
+                val cleaned = normalizeForPdf(cleanInline(raw, refs), encoder)
                 wrapText(cleaned, font, fontSize, cellTextWidth).ifEmpty { listOf("") }
             }
             val maxLines = wrapped.maxOfOrNull { it.size }?.coerceAtLeast(1) ?: 1
@@ -1008,6 +1100,7 @@ private fun wrapProseLine(
 
 private val QUOTE_LINE_PREFIX = Regex("""^\s*>\s?""")
 private val HIGHLIGHT_REGEX = Regex("""==(?![=\s])([^\r\n]*?)(?<![=\s])==(?!=)""")
+private val UNDERLINE_REGEX = Regex("""<u>(.*?)</u>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
 private val HEADING_TYPES = setOf(
     MarkdownElementTypes.ATX_1,
@@ -1071,10 +1164,10 @@ private fun splitTableCells(line: String): List<String> =
 private fun padCells(cells: List<String>, size: Int): List<String> =
     if (cells.size >= size) cells.take(size) else cells + List(size - cells.size) { "" }
 
-private fun cleanInline(source: String): String {
+private fun cleanInline(source: String, refs: DocRefs = DocRefs.EMPTY): String {
     val root = astOf(source)
     return buildString {
-        appendInlineChildren(root, PdfInlineCtx.of(source, root), emptySet(), softBreakAsSpace = true)
+        appendInlineChildren(root, PdfInlineCtx.of(source, root, refs), emptySet(), softBreakAsSpace = true)
     }.trim()
 }
 
@@ -1085,6 +1178,7 @@ private data class TextSpecial(
 
 private class PdfInlineCtx private constructor(
     val src: String,
+    val refs: DocRefs,
     val specials: List<TextSpecial>,
 ) {
     fun coversNode(node: ASTNode): Boolean {
@@ -1094,7 +1188,7 @@ private class PdfInlineCtx private constructor(
     }
 
     companion object {
-        fun of(src: String, root: ASTNode): PdfInlineCtx {
+        fun of(src: String, root: ASTNode, refs: DocRefs = DocRefs.EMPTY): PdfInlineCtx {
             val skips = buildList { collectRanges(root, SKIP_TYPES, this) }
             val nodeBounds = buildList { collectElementRanges(root, this) }
 
@@ -1104,15 +1198,27 @@ private class PdfInlineCtx private constructor(
                 val display = w.alias ?: dest
                 TextSpecial(w.offset..last, display)
             }
-            val masked = maskRanges(src, skips)
-            val marks = findHighlights(src, masked, nodeBounds)
+            val maths = inlineMathSpansIn(src, skips).map { (range, latex) ->
+                TextSpecial(range, asciiMathFallback(renderLatexToUnicode(latex)))
+            }
+            val mathRanges = maths.map { it.range }
+            val footnotes = footnoteRefSpansIn(src, skips + mathRanges).map { (range, id) ->
+                TextSpecial(range, "[${refs.footnoteNumber(id) ?: id}]")
+            }
+            val masked = maskRanges(src, skips + mathRanges)
+            val marks = findRegexSpecials(src, masked, nodeBounds, HIGHLIGHT_REGEX, 2) { inner ->
+                cleanInline(inner, refs)
+            }
+            val underlines = findRegexSpecials(src, masked, nodeBounds, UNDERLINE_REGEX, 3) { inner ->
+                cleanInline(inner, refs)
+            }
 
-            val sorted = (wikis + marks).sortedBy { it.range.first }
+            val sorted = (wikis + maths + footnotes + marks + underlines).sortedBy { it.range.first }
             val kept = ArrayList<TextSpecial>()
             for (s in sorted) {
                 if (kept.isEmpty() || s.range.first > kept.last().range.last) kept += s
             }
-            return PdfInlineCtx(src, kept)
+            return PdfInlineCtx(src, refs, kept)
         }
 
         private fun collectRanges(node: ASTNode, types: Set<IElementType>, out: MutableList<IntRange>) {
@@ -1143,22 +1249,26 @@ private class PdfInlineCtx private constructor(
             return String(chars)
         }
 
-        private fun findHighlights(
+        private inline fun findRegexSpecials(
             src: String,
             masked: String,
             nodeBounds: List<IntRange>,
+            regex: Regex,
+            retryAdvance: Int,
+            transform: (String) -> String,
         ): List<TextSpecial> {
             val out = ArrayList<TextSpecial>()
             var pos = 0
             while (pos < masked.length) {
-                val m = HIGHLIGHT_REGEX.find(masked, pos) ?: break
+                val m = regex.find(masked, pos) ?: break
                 val start = m.range.first
                 if ((start > 0 && src[start - 1] == '\\') || crossesAnyBoundary(m.range, nodeBounds)) {
-                    pos = start + 2
+                    pos = start + retryAdvance
                     continue
                 }
-                val inner = src.substring(start + 2, m.range.last - 1)
-                out += TextSpecial(m.range, cleanInline(inner))
+                val innerRange = m.groups[1]!!.range
+                val inner = if (innerRange.isEmpty()) "" else src.substring(innerRange.first, innerRange.last + 1)
+                out += TextSpecial(m.range, transform(inner))
                 pos = m.range.last + 1
             }
             return out
@@ -1224,7 +1334,8 @@ private fun StringBuilder.appendInlineNode(node: ASTNode, ctx: PdfInlineCtx, sof
 
         MarkdownElementTypes.INLINE_LINK,
         MarkdownElementTypes.FULL_REFERENCE_LINK,
-        MarkdownElementTypes.SHORT_REFERENCE_LINK -> appendLinkText(node, ctx, softBreakAsSpace)
+        MarkdownElementTypes.SHORT_REFERENCE_LINK,
+        MarkdownElementTypes.LINK_LABEL -> appendLinkText(node, ctx, softBreakAsSpace)
 
         MarkdownElementTypes.IMAGE -> appendImageText(node, ctx)
 
@@ -1260,12 +1371,19 @@ private fun StringBuilder.appendCodeSpanText(node: ASTNode, ctx: PdfInlineCtx) {
 }
 
 private fun StringBuilder.appendLinkText(node: ASTNode, ctx: PdfInlineCtx, softBreakAsSpace: Boolean) {
-    val label = node.pick(MarkdownElementTypes.LINK_TEXT) ?: node.pick(MarkdownElementTypes.LINK_LABEL)
-    val url = node.pick(MarkdownElementTypes.LINK_DESTINATION)
+    val refLabelNode = if (node.type == MarkdownElementTypes.LINK_LABEL) {
+        node
+    } else {
+        node.pick(MarkdownElementTypes.LINK_LABEL)
+    }
+    val label = node.pick(MarkdownElementTypes.LINK_TEXT) ?: refLabelNode
+    val directUrl = node.pick(MarkdownElementTypes.LINK_DESTINATION)
         ?.getTextInNode(ctx.src)
         ?.toString()
         ?.trim()
         ?.removeSurrounding("<", ">")
+    val refName = refLabelNode?.getTextInNode(ctx.src)?.toString()?.removeSurrounding("[", "]")
+    val url = directUrl ?: refName?.let { ctx.refs.resolveLink(it) }
     if (url == null) {
         appendInlineSource(node.startOffset, node.endOffset, ctx)
         return
@@ -1283,13 +1401,19 @@ private fun StringBuilder.appendLinkText(node: ASTNode, ctx: PdfInlineCtx, softB
 }
 
 private fun StringBuilder.appendImageText(node: ASTNode, ctx: PdfInlineCtx) {
-    val linkNode = node.pick(MarkdownElementTypes.INLINE_LINK) ?: node
-    val label = linkNode.pick(MarkdownElementTypes.LINK_TEXT)
+    val linkNode = node.pick(MarkdownElementTypes.INLINE_LINK)
+        ?: node.pick(MarkdownElementTypes.FULL_REFERENCE_LINK)
+        ?: node.pick(MarkdownElementTypes.SHORT_REFERENCE_LINK)
+        ?: node
+    val refLabelNode = linkNode.pick(MarkdownElementTypes.LINK_LABEL)
+    val label = linkNode.pick(MarkdownElementTypes.LINK_TEXT) ?: refLabelNode
+    val refName = refLabelNode?.getTextInNode(ctx.src)?.toString()?.removeSurrounding("[", "]")
     val src = linkNode.pick(MarkdownElementTypes.LINK_DESTINATION)
         ?.getTextInNode(ctx.src)
         ?.toString()
         ?.trim()
         ?.removeSurrounding("<", ">")
+        ?: refName?.let { ctx.refs.resolveLink(it) }
     if (src == null) {
         appendInlineSource(node.startOffset, node.endOffset, ctx)
         return
@@ -1318,3 +1442,119 @@ private fun StringBuilder.appendInlineSource(start: Int, end: Int, ctx: PdfInlin
 }
 
 private fun ASTNode.pick(type: IElementType): ASTNode? = children.firstOrNull { it.type == type }
+
+private fun asciiMathFallback(text: String): String {
+    if (text.isEmpty()) return ""
+    val sb = StringBuilder(text.length)
+    var i = 0
+    while (i < text.length) {
+        val ch = text[i]
+        val sup = MATH_SUPERSCRIPT_ASCII[ch]
+        if (sup != null) {
+            val run = StringBuilder()
+            while (i < text.length && MATH_SUPERSCRIPT_ASCII[text[i]] != null) {
+                run.append(MATH_SUPERSCRIPT_ASCII.getValue(text[i]))
+                i++
+            }
+            appendScriptRun(sb, '^', run.toString())
+            continue
+        }
+        val sub = MATH_SUBSCRIPT_ASCII[ch]
+        if (sub != null) {
+            val run = StringBuilder()
+            while (i < text.length && MATH_SUBSCRIPT_ASCII[text[i]] != null) {
+                run.append(MATH_SUBSCRIPT_ASCII.getValue(text[i]))
+                i++
+            }
+            appendScriptRun(sb, '_', run.toString())
+            continue
+        }
+        val replacement = MATH_UNICODE_TO_ASCII[ch]
+        if (replacement != null) {
+            if (replacement.isNotEmpty() && replacement[0].isLetter() &&
+                sb.isNotEmpty() && sb.last().isLetterOrDigit()
+            ) {
+                sb.append(' ')
+            }
+            sb.append(replacement)
+            val next = text.getOrNull(i + 1)
+            if (replacement.isNotEmpty() && replacement.last().isLetter() &&
+                next != null && next.isLetterOrDigit()
+            ) {
+                sb.append(' ')
+            }
+            i++
+            continue
+        }
+        val cp = Character.codePointAt(text, i)
+        val count = Character.charCount(cp)
+        val slice = text.substring(i, i + count)
+        if (cp == '\n'.code || cp == '\t'.code || isSafeWinAnsiCodePoint(cp)) {
+            sb.append(slice)
+        } else {
+            sb.append(' ')
+        }
+        i += count
+    }
+    return sb.toString()
+}
+
+private fun appendScriptRun(sb: StringBuilder, prefix: Char, run: String) {
+    sb.append(prefix)
+    if (run.length == 1 || run.all { it.isLetterOrDigit() }) {
+        sb.append(run)
+    } else {
+        sb.append('(').append(run).append(')')
+    }
+}
+
+private fun isSafeWinAnsiCodePoint(cp: Int): Boolean =
+    cp in 0x20..0x7E || cp in 0xA0..0xFF || cp == 0x2022 || cp == 0x2013 || cp == 0x2014
+
+private val MATH_SUPERSCRIPT_ASCII = mapOf(
+    '⁰' to '0', '¹' to '1', '²' to '2', '³' to '3', '⁴' to '4',
+    '⁵' to '5', '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9',
+    '⁺' to '+', '⁻' to '-', '⁼' to '=', '⁽' to '(', '⁾' to ')',
+    'ⁿ' to 'n', 'ⁱ' to 'i',
+)
+
+private val MATH_SUBSCRIPT_ASCII = mapOf(
+    '₀' to '0', '₁' to '1', '₂' to '2', '₃' to '3', '₄' to '4',
+    '₅' to '5', '₆' to '6', '₇' to '7', '₈' to '8', '₉' to '9',
+    '₊' to '+', '₋' to '-', '₌' to '=', '₍' to '(', '₎' to ')',
+)
+
+private val MATH_UNICODE_TO_ASCII = mapOf(
+    // Gregas minúsculas
+    'α' to "alpha", 'β' to "beta", 'γ' to "gamma", 'δ' to "delta",
+    'ε' to "epsilon", 'ζ' to "zeta", 'η' to "eta", 'θ' to "theta", 'ϑ' to "theta",
+    'ι' to "iota", 'κ' to "kappa", 'λ' to "lambda", 'μ' to "mu", 'ν' to "nu",
+    'ξ' to "xi", 'ο' to "omicron", 'π' to "pi", 'ϖ' to "pi", 'ρ' to "rho", 'ϱ' to "rho",
+    'σ' to "sigma", 'ς' to "sigma", 'τ' to "tau", 'υ' to "upsilon", 'φ' to "phi",
+    'χ' to "chi", 'ψ' to "psi", 'ω' to "omega",
+    // Gregas maiúsculas
+    'Γ' to "Gamma", 'Δ' to "Delta", 'Θ' to "Theta", 'Λ' to "Lambda",
+    'Ξ' to "Xi", 'Π' to "Pi", 'Σ' to "Sigma", 'Υ' to "Upsilon",
+    'Φ' to "Phi", 'Ψ' to "Psi", 'Ω' to "Omega",
+    // Operadores e símbolos matemáticos
+    '±' to "+/-", '∓' to "-/+", '×' to "x", '÷' to "/", '·' to "*",
+    '∗' to "*", '⋆' to "*", '∘' to "o",
+    '≤' to "<=", '≥' to ">=", '≠' to "!=", '≈' to "~=", '≡' to "===",
+    '≃' to "~=", '≅' to "~=", '∝' to "prop", '≪' to "<<", '≫' to ">>",
+    '≺' to "<", '≻' to ">",
+    '∞' to "inf", '∑' to "sum", '∏' to "prod",
+    '∫' to "int", '∬' to "iint", '∮' to "oint",
+    '√' to "sqrt", '∂' to "d", '∇' to "nabla", 'ℏ' to "hbar", 'ℓ' to "l",
+    'ℜ' to "Re", 'ℑ' to "Im", 'ℵ' to "aleph",
+    '→' to "->", '←' to "<-", '↔' to "<->",
+    '⇒' to "=>", '⇐' to "<=", '⇔' to "<=>", '↦' to "|->",
+    '∈' to "in", '∉' to "notin", '∋' to "ni",
+    '⊂' to "subset", '⊆' to "subseteq", '⊃' to "supset", '⊇' to "supseteq",
+    '∪' to "U", '∩' to "cap", '∅' to "empty", '∖' to "\\",
+    '∀' to "forall", '∃' to "exists", '∄' to "!exists",
+    '¬' to "!", '∧' to "and", '∨' to "or", '⊤' to "T", '⊥' to "_|_",
+    '⊢' to "|-", '⊨' to "|=", '∴' to "therefore", '∵' to "because",
+    '°' to "deg", '∠' to "angle", '∥' to "||", '‖' to "||",
+    '…' to "...", '′' to "'",
+    '⟨' to "<", '⟩' to ">", '⌊' to "[", '⌋' to "]", '⌈' to "[", '⌉' to "]",
+)

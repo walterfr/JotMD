@@ -23,7 +23,7 @@ dependencies {
 }
 
 val desktopPackageVersionRaw = (findProperty("desktopPackageVersion") as String?)?.trim().orEmpty()
-val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.2.0"
+val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.3.0"
 
 compose.desktop {
     application {

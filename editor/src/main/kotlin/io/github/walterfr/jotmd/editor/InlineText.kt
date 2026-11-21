@@ -5,12 +5,19 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import io.github.walterfr.jotmd.core.DocRefs
 import io.github.walterfr.jotmd.core.astOf
+import io.github.walterfr.jotmd.core.footnoteRefSpansIn
+import io.github.walterfr.jotmd.core.inlineMathSpansIn
+import io.github.walterfr.jotmd.core.normalizeRefLabel
+import io.github.walterfr.jotmd.core.renderLatexToUnicode
 import io.github.walterfr.jotmd.core.tagSpansIn
 import io.github.walterfr.jotmd.core.wikilinksIn
 import org.intellij.markdown.IElementType
@@ -20,6 +27,7 @@ import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import java.util.regex.PatternSyntaxException
 
 /**
  * Markdown inline de [source] como [AnnotatedString], sem os marcadores.
@@ -31,14 +39,133 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
  * próprios marcadores e todo o resto é emitido literal. Construção
  * desconhecida aparece como o texto cru dela; nunca some.
  */
-fun inlineText(source: String): AnnotatedString {
+fun inlineText(
+    source: String,
+    refs: DocRefs = DocRefs.EMPTY,
+    highlightQuery: String = "",
+    highlightCaseSensitive: Boolean = false,
+    highlightWholeWord: Boolean = false,
+    highlightRegex: Boolean = false,
+    highlightActive: Boolean = false,
+): AnnotatedString {
     val ast = astOf(source)
-    val built = buildAnnotatedString { appendChildren(ast, Ctx.of(source, ast), emptySet()) }
+    val built = buildAnnotatedString { appendChildren(ast, Ctx.of(source, ast, refs), emptySet()) }
     // O `======` do setext e afins são descartados depois da quebra de linha que
     // os precede, então sobra um "\n" pendurado no fim.
     val end = built.text.indexOfLast { it != '\n' } + 1
-    return if (end == built.length) built else built.subSequence(0, end)
+    val trimmed = if (end == built.length) built else built.subSequence(0, end)
+    if (highlightQuery.isEmpty()) return trimmed
+    return applySearchHighlight(
+        base = trimmed,
+        query = highlightQuery,
+        caseSensitive = highlightCaseSensitive,
+        wholeWord = highlightWholeWord,
+        regex = highlightRegex,
+        activeOccurrenceInBlock = if (highlightActive) 0 else null,
+    )
 }
+
+/**
+ * Sobrepõe destaque de busca em [base], preservando todos os estilos e links
+ * existentes. Padrões regex inválidos são ignorados com segurança.
+ */
+fun applySearchHighlight(
+    base: AnnotatedString,
+    query: String,
+    caseSensitive: Boolean = false,
+    wholeWord: Boolean = false,
+    regex: Boolean = false,
+    activeOccurrenceInBlock: Int? = null,
+): AnnotatedString {
+    if (query.isEmpty() || base.isEmpty()) return base
+    val matches = findSearchMatchRanges(base.text, query, caseSensitive, wholeWord, regex)
+    if (matches.isEmpty()) return base
+    val hitStyle = SpanStyle(background = MdTokens.searchHitBackground)
+    val activeStyle = SpanStyle(
+        background = MdTokens.searchActiveBackground,
+        color = MdTokens.searchActiveText,
+    )
+    return buildAnnotatedString {
+        append(base)
+        for ((index, range) in matches.withIndex()) {
+            val style = if (index == activeOccurrenceInBlock) activeStyle else hitStyle
+            addStyle(style, range.first, range.last + 1)
+        }
+    }
+}
+
+internal fun activeOccurrenceIndex(
+    source: String,
+    activeRange: IntRange?,
+    query: String,
+    caseSensitive: Boolean,
+    wholeWord: Boolean,
+    regex: Boolean,
+): Int? {
+    if (activeRange == null || query.isEmpty()) return null
+    val matches = findSearchMatchRanges(source, query, caseSensitive, wholeWord, regex)
+    val idx = matches.indexOfFirst { it == activeRange }
+        .let { if (it >= 0) it else matches.indexOfFirst { r -> activeRange.first in r } }
+    return if (idx >= 0) idx else null
+}
+
+internal fun findSearchMatchRanges(
+    text: String,
+    query: String,
+    caseSensitive: Boolean,
+    wholeWord: Boolean,
+    regex: Boolean,
+): List<IntRange> {
+    if (query.isEmpty() || text.isEmpty()) return emptyList()
+    val out = ArrayList<IntRange>()
+    if (regex) {
+        val options = if (caseSensitive) setOf(RegexOption.MULTILINE) else setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE)
+        val compiled = try {
+            Regex(query, options)
+        } catch (_: PatternSyntaxException) {
+            return emptyList()
+        }
+        var searchFrom = 0
+        while (searchFrom <= text.length) {
+            val m = compiled.find(text, searchFrom) ?: break
+            val start = m.range.first
+            val endExclusive = m.range.last + 1
+            if (endExclusive <= start) {
+                searchFrom = maxOf(start, endExclusive) + 1
+                continue
+            }
+            if (wholeWord && !isSearchWholeWord(text, start, endExclusive)) {
+                searchFrom = start + 1
+                continue
+            }
+            out += start until endExclusive
+            searchFrom = endExclusive
+        }
+    } else {
+        val ignoreCase = !caseSensitive
+        var searchFrom = 0
+        while (searchFrom <= text.length - query.length) {
+            val idx = text.indexOf(query, searchFrom, ignoreCase = ignoreCase)
+            if (idx < 0) break
+            val endExclusive = idx + query.length
+            if (wholeWord && !isSearchWholeWord(text, idx, endExclusive)) {
+                searchFrom = idx + 1
+                continue
+            }
+            out += idx until endExclusive
+            searchFrom = endExclusive
+        }
+    }
+    return out
+}
+
+private fun isSearchWholeWord(text: String, start: Int, endExclusive: Int): Boolean {
+    val before = text.getOrNull(start - 1)
+    val after = text.getOrNull(endExclusive)
+    return (before == null || !before.isSearchWordChar()) && (after == null || !after.isSearchWordChar())
+}
+
+private fun Char.isSearchWordChar(): Boolean = isLetterOrDigit() || this == '_'
 
 /**
  * Marcadores estruturais que nunca são conteúdo, onde quer que apareçam.
@@ -65,6 +192,7 @@ private val ALWAYS_DROP: Set<IElementType> = setOf(
 /** Prefixos dos links internos; o app os intercepta via LocalUriHandler. */
 const val WIKI_URI = "jotmd:wiki:"
 const val TAG_URI = "jotmd:tag:"
+const val FOOTNOTE_URI = "jotmd:footnote:"
 
 /** Trecho do fonte que sai trocado: [display] no lugar de [range], com [link] ou [style]. */
 internal class Special(
@@ -94,9 +222,19 @@ private val SKIP_TYPES: Set<IElementType> = setOf(
  * o que importa é que nenhum desses pedaços seja emitido — todo texto do fonte
  * passa por [appendSource], que troca a faixa inteira pelo texto de exibição.
  */
-internal class Ctx private constructor(val src: String, val specials: List<Special>) {
+internal class Ctx private constructor(
+    val src: String,
+    val specials: List<Special>,
+    val refs: DocRefs = DocRefs.EMPTY,
+) {
+    fun coversNode(node: ASTNode): Boolean {
+        if (node.startOffset >= node.endOffset) return false
+        val last = node.endOffset - 1
+        return specials.any { node.startOffset >= it.range.first && last <= it.range.last }
+    }
+
     companion object {
-        fun of(src: String, ast: ASTNode = astOf(src)): Ctx {
+        fun of(src: String, ast: ASTNode = astOf(src), refs: DocRefs = DocRefs.EMPTY): Ctx {
             val wikis = wikilinksIn(src).map { w ->
                 // A regex do wikilink proíbe `]` dentro: o primeiro `]]` fecha.
                 val last = src.indexOf("]]", w.offset) + 1
@@ -108,22 +246,44 @@ internal class Ctx private constructor(val src: String, val specials: List<Speci
             }
             val skipRanges = ArrayList<IntRange>()
             collectSkipRanges(ast, skipRanges)
+            val mathStyle = SpanStyle(
+                fontFamily = FontFamily.Serif,
+                fontStyle = FontStyle.Italic,
+                background = MdTokens.inlineCodeBackground,
+            )
+            val mathSpans = inlineMathSpansIn(src, skipRanges).map { (range, expr) ->
+                Special(range, renderLatexToUnicode(expr), style = mathStyle)
+            }
+            val extendedSkips = skipRanges + mathSpans.map { it.range }
+            val footnoteStyle = SpanStyle(
+                baselineShift = BaselineShift.Superscript,
+                fontSize = MdTokens.base * 0.78f,
+            )
+            val footnotes = footnoteRefSpansIn(src, extendedSkips).map { (range, id) ->
+                val display = "[${refs.footnoteNumber(id) ?: id}]"
+                Special(
+                    range = range,
+                    display = display,
+                    link = internalLink(FOOTNOTE_URI + normalizeRefLabel(id)),
+                    style = footnoteStyle,
+                )
+            }
             val highlightStyle = SpanStyle(
                 background = MdTokens.highlightBackground,
                 color = MdTokens.highlightText,
             )
-            val highlights = regexSpecials(src, HIGHLIGHT_REGEX, skipRanges, highlightStyle)
+            val highlights = regexSpecials(src, HIGHLIGHT_REGEX, extendedSkips, highlightStyle)
             val underlines = regexSpecials(
                 src,
                 UNDERLINE_REGEX,
-                skipRanges,
+                extendedSkips,
                 SpanStyle(textDecoration = TextDecoration.Underline),
             )
             // `[[#topo]]` também casa como tag; o que começa antes vence.
-            val sorted = (wikis + tags + highlights + underlines).sortedBy { it.range.first }
+            val sorted = (wikis + footnotes + mathSpans + tags + highlights + underlines).sortedBy { it.range.first }
             val kept = ArrayList<Special>()
             for (s in sorted) if (kept.isEmpty() || s.range.first > kept.last().range.last) kept += s
-            return Ctx(src, kept)
+            return Ctx(src, kept, refs)
         }
 
         private fun regexSpecials(
@@ -158,6 +318,10 @@ private val BACKTICK_MARKER = setOf(MarkdownTokenTypes.BACKTICK)
 private val BRACKET_MARKERS = setOf(MarkdownTokenTypes.LBRACKET, MarkdownTokenTypes.RBRACKET)
 
 private fun AnnotatedString.Builder.appendNode(node: ASTNode, ctx: Ctx) {
+    if (ctx.coversNode(node)) {
+        appendLeaf(node, ctx)
+        return
+    }
     when (node.type) {
         MarkdownElementTypes.STRONG ->
             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
@@ -188,6 +352,8 @@ private fun AnnotatedString.Builder.appendNode(node: ASTNode, ctx: Ctx) {
         MarkdownElementTypes.IMAGE -> {
             val label = node.pick(MarkdownElementTypes.LINK_TEXT)
                 ?: node.pick(MarkdownElementTypes.INLINE_LINK)?.pick(MarkdownElementTypes.LINK_TEXT)
+                ?: node.pick(MarkdownElementTypes.FULL_REFERENCE_LINK)?.pick(MarkdownElementTypes.LINK_TEXT)
+                ?: node.pick(MarkdownElementTypes.SHORT_REFERENCE_LINK)?.pick(MarkdownElementTypes.LINK_LABEL)
             if (label != null) appendChildren(label, ctx, BRACKET_MARKERS) else appendLeaf(node, ctx)
         }
 
@@ -203,20 +369,31 @@ private fun AnnotatedString.Builder.appendNode(node: ASTNode, ctx: Ctx) {
 }
 
 private fun AnnotatedString.Builder.appendLink(node: ASTNode, ctx: Ctx) {
-    val label = node.pick(MarkdownElementTypes.LINK_TEXT)
-        ?: node.pick(MarkdownElementTypes.LINK_LABEL)
-    val url = node.pick(MarkdownElementTypes.LINK_DESTINATION)?.getTextInNode(ctx.src)?.toString()
+    val inlineUrl = node.pick(MarkdownElementTypes.LINK_DESTINATION)
+        ?.getTextInNode(ctx.src)
+        ?.toString()
+    if (inlineUrl != null) {
+        val label = node.pick(MarkdownElementTypes.LINK_TEXT)
+            ?: node.pick(MarkdownElementTypes.LINK_LABEL)
+        withLink(urlLink(inlineUrl)) {
+            if (label != null) appendChildren(label, ctx, BRACKET_MARKERS) else append(inlineUrl)
+        }
+        return
+    }
 
-    // ponytail: link de referência sai literal, com colchetes. Resolver `[ref]`
-    // exige varrer as definições do documento inteiro, e aqui só existe o bloco.
-    // Some junto o caso de `[b]` solto no meio do texto, que por CommonMark é
-    // texto mesmo. Resolver de verdade em F5, junto com o índice do workspace.
-    if (url == null) {
+    val textNode = node.pick(MarkdownElementTypes.LINK_TEXT)
+    val labelNode = node.pick(MarkdownElementTypes.LINK_LABEL)
+    val labelKey = labelNode?.getTextInNode(ctx.src)?.toString()?.removeSurrounding("[", "]")
+    val textKey = textNode?.getTextInNode(ctx.src)?.toString()?.removeSurrounding("[", "]")
+    val lookupKey = labelKey?.takeIf { it.isNotBlank() } ?: textKey
+    val resolvedUrl = lookupKey?.let { ctx.refs.resolveLink(it) }
+    if (resolvedUrl == null) {
         appendLeaf(node, ctx)
         return
     }
-    withLink(urlLink(url)) {
-        if (label != null) appendChildren(label, ctx, BRACKET_MARKERS) else append(url)
+    val display = textNode ?: labelNode
+    withLink(urlLink(resolvedUrl)) {
+        if (display != null) appendChildren(display, ctx, BRACKET_MARKERS) else append(resolvedUrl)
     }
 }
 
@@ -272,6 +449,9 @@ private fun AnnotatedString.Builder.appendSource(start: Int, end: Int, ctx: Ctx)
         if (sp.range.first > i) append(ctx.src.substring(i, sp.range.first))
         if (sp.range.first >= start) {
             when {
+                sp.link != null && sp.style != null -> withLink(sp.link) {
+                    withStyle(sp.style) { append(sp.display) }
+                }
                 sp.link != null -> withLink(sp.link) { append(sp.display) }
                 sp.style != null -> withStyle(sp.style) { append(sp.display) }
                 else -> append(sp.display)

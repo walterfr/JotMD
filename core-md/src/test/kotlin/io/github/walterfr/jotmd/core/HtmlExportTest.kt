@@ -27,6 +27,7 @@ class HtmlExportTest {
             ".md-meta-block", ".md-fences", ".md-alert", ".md-alert-note",
             ".md-alert-tip", ".md-alert-important", ".md-alert-warning",
             ".md-alert-caution", ".md-alert-title", "input[type=\"checkbox\"]",
+            ".md-math-block", ".md-inline-math", ".md-footnote-def",
         )) {
             assertTrue(token in light, "token claro ausente: $token")
         }
@@ -231,5 +232,68 @@ class HtmlExportTest {
         assertTrue("<strong><u>forte</u></strong>" in html)
         assertTrue("<u><mark>marca</mark></u>" in html)
         assertTrue("<code>&lt;u&gt;literal&lt;/u&gt;</code>" in html)
+    }
+
+    @Test
+    fun `resolve links de referência e imagens por referência sem emitir definições`() {
+        val md = """
+            Veja [Guia][Ref Um], [Colapsado][], [Curto], ![Logo][img] e [Indefinido].
+
+            [ref um]: https://um.example.com "Título"
+            [colapsado]: <https://dois.example.com>
+            [curto]: https://tres.example.com
+            [img]: logo.png
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<a href=\"https://um.example.com\">Guia</a>" in html)
+        assertTrue("<a href=\"https://dois.example.com\">Colapsado</a>" in html)
+        assertTrue("<a href=\"https://tres.example.com\">Curto</a>" in html)
+        assertTrue("<img src=\"logo.png\" alt=\"Logo\" />" in html)
+        assertTrue("[Indefinido]" in html)
+        assertFalse("https://um.example.com \"Título\"" in html)
+    }
+
+    @Test
+    fun `converte notas de rodapé inline e definições inclusive tipo link_definition`() {
+        val md = """
+            Texto[^beta] depois[^alfa], indefinida[^falta] e código `[^code]`.
+
+            [^alfa]: Nota **A** com [Ref].
+            [^beta]: https://beta.example.com
+
+            [ref]: https://ref.example.com
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<sup class=\"md-footnote\"><a href=\"#fn-beta\">[1]</a></sup>" in html)
+        assertTrue("<sup class=\"md-footnote\"><a href=\"#fn-alfa\">[2]</a></sup>" in html)
+        assertTrue("indefinida[^falta]" in html)
+        assertTrue("<code>[^code]</code>" in html)
+        assertTrue(
+            "<div class=\"md-footnote-def\" id=\"fn-alfa\"><span class=\"md-footnote-num\">[2]</span> Nota <strong>A</strong> com <a href=\"https://ref.example.com\">Ref</a>.</div>" in html,
+        )
+        assertTrue(
+            "<div class=\"md-footnote-def\" id=\"fn-beta\"><span class=\"md-footnote-num\">[1]</span>" in html,
+        )
+        assertTrue("https://beta.example.com" in html)
+    }
+
+    @Test
+    fun `converte blocos e spans matemáticos LaTeX protegendo moedas e código`() {
+        val md = """
+            Inline ${'$'}\alpha^2 + \beta \le \gamma${'$'}, ==${'$'}x^2${'$'}==, preço ${'$'}5 e ${'$'}10, e `${'$'}raw${'$'}`.
+
+            ${'$'}${'$'}E = mc^2${'$'}${'$'}
+
+            ${'$'}${'$'}
+            \frac{a + b}{2}
+            ${'$'}${'$'}
+        """.trimIndent()
+        val html = exportToHtml(md)
+        assertTrue("<span class=\"md-inline-math\">α² + β ≤ γ</span>" in html)
+        assertTrue("<mark><span class=\"md-inline-math\">x²</span></mark>" in html)
+        assertTrue("preço \$5 e \$10" in html)
+        assertTrue("<code>\$raw\$</code>" in html)
+        assertTrue("<div class=\"md-math-block\">E = mc²</div>" in html)
+        assertTrue("<div class=\"md-math-block\">(a + b)/2</div>" in html)
     }
 }

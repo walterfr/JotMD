@@ -126,4 +126,41 @@ class TableOpsTest {
 
         assertNull(cycleTableColumnAlignment(step1, 5))
     }
+
+    @Test
+    fun `newTableMarkdown gera tabela formatada com limites de colunas e linhas`() {
+        val def = newTableMarkdown()
+        val parsedDef = assertNotNull(tableOf(def))
+        assertEquals(listOf("Col 1", "Col 2", "Col 3"), parsedDef.headers)
+        assertEquals(3, parsedDef.rows.size)
+        assertEquals(listOf("", "", ""), parsedDef.rows[0])
+
+        val clampedLow = assertNotNull(tableOf(newTableMarkdown(cols = 0, dataRows = 0)))
+        assertEquals(listOf("Col 1"), clampedLow.headers)
+        assertEquals(1, clampedLow.rows.size)
+
+        val clampedHigh = assertNotNull(tableOf(newTableMarkdown(cols = 99, dataRows = 200)))
+        assertEquals(40, clampedHigh.headers.size)
+        assertEquals(99, clampedHigh.rows.size)
+    }
+
+    @Test
+    fun `moveTableColumn troca colunas e rejeita índices ou deltas inválidos`() {
+        val movedRight = assertNotNull(moveTableColumn(sample, colIndex = 0, delta = 1))
+        val parsedRight = assertNotNull(tableOf(movedRight))
+        assertEquals(listOf("Valor", "Nome", "Nota"), parsedRight.headers)
+        assertEquals(listOf(TableAlignment.CENTER, TableAlignment.LEFT, TableAlignment.RIGHT), parsedRight.alignments)
+        assertEquals(listOf("10", "Um", "ok"), parsedRight.rows[0])
+        assertEquals(listOf("20", "Dois", "fim"), parsedRight.rows[1])
+
+        val movedLeft = assertNotNull(moveTableColumn(movedRight, colIndex = 2, delta = -1))
+        val parsedLeft = assertNotNull(tableOf(movedLeft))
+        assertEquals(listOf("Valor", "Nota", "Nome"), parsedLeft.headers)
+
+        assertNull(moveTableColumn(sample, colIndex = 0, delta = -1))
+        assertNull(moveTableColumn(sample, colIndex = 2, delta = 1))
+        assertNull(moveTableColumn(sample, colIndex = 1, delta = 0))
+        assertNull(moveTableColumn(sample, colIndex = 5, delta = -1))
+        assertNull(moveTableColumn("não é tabela", colIndex = 0, delta = 1))
+    }
 }

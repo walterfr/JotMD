@@ -308,6 +308,94 @@ class PdfExportTest {
         assertStreamCoordsWithinBounds(pdf)
     }
 
+    @Test
+    fun `renderiza marcador TOC com título Índices e entradas indentadas por nível`() {
+        val md = """
+            [TOC]
+
+            # Cap 1
+
+            ## Sub 1.1
+
+            ### Detalhe
+        """.trimIndent()
+        val bytes = exportToPdf(md, title = "Com Sumário")
+        val pdf = bytes.toString(Charsets.ISO_8859_1)
+
+        assertValidPdfStructure(bytes)
+        assertStreamCoordsWithinBounds(pdf)
+        assertTrue("(\\315ndices)" in pdf)
+        assertTrue("(Cap 1)" in pdf)
+        assertTrue("(Sub 1.1)" in pdf)
+        assertTrue("(Detalhe)" in pdf)
+        assertFalse("([TOC])" in pdf)
+
+        // Nível 1 em x=45, nível 2 em x=57 (+12pt), nível 3 em x=69 (+24pt).
+        assertTrue(Regex("""1 0 0 1 45\.00 [0-9.]+ Tm\n\(Cap 1\) Tj""").containsMatchIn(pdf))
+        assertTrue(Regex("""1 0 0 1 57\.00 [0-9.]+ Tm\n\(Sub 1\.1\) Tj""").containsMatchIn(pdf))
+        assertTrue(Regex("""1 0 0 1 69\.00 [0-9.]+ Tm\n\(Detalhe\) Tj""").containsMatchIn(pdf))
+    }
+
+    @Test
+    fun `renderiza matemática inline e em bloco em ASCII seguro sem interrogação em WinAnsi`() {
+        val md = """
+            Inline ${'$'}\alpha + \beta \le \pi${'$'}, ${'$'}x^2 + y^3 = z^1${'$'}, ${'$'}\sum_{i=1}^n \sqrt{x} \neq \infty \to 0${'$'}.
+
+            ${'$'}${'$'}
+            \frac{\alpha + \beta}{2} \ge \int_0^1 x \, dx \approx \leftarrow \Rightarrow \Leftrightarrow
+            ${'$'}${'$'}
+        """.trimIndent()
+        val bytes = exportToPdf(md, title = "Matemática")
+        val pdf = bytes.toString(Charsets.ISO_8859_1)
+
+        assertValidPdfStructure(bytes)
+        assertStreamCoordsWithinBounds(pdf)
+        assertTrue(bytes.all { (it.toInt() and 0xFF) < 0x80 })
+        assertFalse("?" in pdf, "Símbolos matemáticos não devem virar '?' em WinAnsi")
+
+        assertTrue("alpha + beta <= pi" in pdf)
+        assertTrue("x^2 + y^3 = z^1" in pdf)
+        assertTrue("sum_\\(i=1\\)^n sqrt x != inf -> 0" in pdf)
+        assertTrue("0.97 0.97 0.97 rg" in pdf)
+        assertTrue("\\(alpha + beta\\)/2 >= int_0^1 x dx ~= <- => <=>" in pdf)
+    }
+
+    @Test
+    fun `limpa tag u, resolve links de referência e renderiza notas de rodapé no PDF`() {
+        val md = """
+            Texto <u>sublinhado</u>, <u>**forte**</u> e `<u>literal</u>`.
+
+            Links: [Site][ref], [Curto] e ![Foto][img].
+
+            Nota[^b] antes de[^a] e indefinida[^xyz].
+
+            [ref]: https://a.com
+            [curto]: https://b.com
+            [img]: foto.png
+
+            [^a]: Primeira definição
+            [^b]: https://nota.example.com
+        """.trimIndent()
+        val bytes = exportToPdf(md, title = "Refs")
+        val pdf = bytes.toString(Charsets.ISO_8859_1)
+
+        assertValidPdfStructure(bytes)
+        assertStreamCoordsWithinBounds(pdf)
+        assertTrue("(Texto sublinhado, forte e <u>literal</u>.)" in pdf)
+        assertFalse("<u>sublinhado" in pdf)
+        assertFalse("sublinhado</u>" in pdf)
+
+        assertTrue("Site \\(https://a.com\\)" in pdf)
+        assertTrue("Curto \\(https://b.com\\)" in pdf)
+        assertTrue("[Imagem: Foto]" in pdf)
+        assertFalse("[ref]" in pdf)
+        assertFalse("[img]" in pdf)
+
+        assertTrue("Nota[1] antes de[2] e indefinida[xyz]." in pdf)
+        assertTrue("([1] https://nota.example.com)" in pdf)
+        assertTrue("([2] Primeira defini\\347\\343o)" in pdf)
+    }
+
     private fun assertValidPdfStructure(bytes: ByteArray) {
         val pdf = bytes.toString(Charsets.ISO_8859_1)
         assertTrue(pdf.startsWith("%PDF-1.4\n"))

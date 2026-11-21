@@ -2,10 +2,12 @@ package io.github.walterfr.jotmd.editor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberUpdatedState
@@ -37,8 +39,9 @@ fun EditorToolbar(state: EditorState, modifier: Modifier = Modifier) {
         modifier
             .fillMaxWidth()
             .background(MdTokens.fenceBackground)
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         ToolbarButton("B", TextStyle(fontWeight = FontWeight.Bold)) { state.wrapSelection("**") }
         ToolbarButton("I", TextStyle(fontStyle = FontStyle.Italic)) { state.wrapSelection("*") }
@@ -48,6 +51,7 @@ fun EditorToolbar(state: EditorState, modifier: Modifier = Modifier) {
             TextStyle(background = MdTokens.highlightBackground, color = MdTokens.highlightText),
         ) { state.wrapSelection("==") }
         ToolbarButton("<>", TextStyle(fontFamily = FontFamily.Monospace)) { state.wrapSelection("`") }
+        ToolbarButton("⊞", TextStyle()) { state.insertTable() }
         ToolbarButton("↶", TextStyle()) { state.undo() }
         ToolbarButton("↷", TextStyle()) { state.redo() }
     }

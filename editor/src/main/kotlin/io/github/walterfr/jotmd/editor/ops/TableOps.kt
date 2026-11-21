@@ -7,6 +7,20 @@ import io.github.walterfr.jotmd.editor.tableOf
 private const val MIN_COLUMN_WIDTH = 4
 private const val MAX_COLUMN_WIDTH = 60
 private const val MAX_TABLE_COLUMNS = 40
+private const val MAX_TABLE_ROWS = 99
+
+/**
+ * Gera tabela Markdown GFM vazia com [cols] colunas (`1..40`) e [dataRows] linhas
+ * de dados (`1..99`), formatada via [formatTable].
+ */
+fun newTableMarkdown(cols: Int = 3, dataRows: Int = 3): String {
+    val safeCols = cols.coerceIn(1, MAX_TABLE_COLUMNS)
+    val safeRows = dataRows.coerceIn(1, MAX_TABLE_ROWS)
+    val headers = (1..safeCols).map { "Col $it" }
+    val alignments = List<TableAlignment?>(safeCols) { null }
+    val rows = List(safeRows) { List(safeCols) { "" } }
+    return formatTable(TableModel(headers, alignments, rows))
+}
 
 /**
  * Formata [model] em tabela GFM com largura de coluna limitada a 4..60 caracteres
@@ -114,6 +128,20 @@ fun moveTableRow(source: String, rowIndex: Int, delta: Int): String? {
     return formatTable(table.copy(rows = rows))
 }
 
+/** Troca a coluna [colIndex] com `colIndex + delta`, ou devolve `null` se fora de faixa. */
+fun moveTableColumn(source: String, colIndex: Int, delta: Int): String? {
+    val table = tableOf(source) ?: return null
+    if (delta == 0 || colIndex !in table.headers.indices) return null
+    val target = colIndex + delta
+    if (target !in table.headers.indices) return null
+    val headers = table.headers.toMutableList().apply { swap(colIndex, target) }
+    val alignments = normalizedAlignments(table).apply { swap(colIndex, target) }
+    val rows = table.rows.map { row ->
+        normalizedRow(row, table.headers.size).apply { swap(colIndex, target) }
+    }
+    return formatTable(TableModel(headers, alignments, rows))
+}
+
 /** Cicla o alinhamento da coluna [colIndex]: `null -> LEFT -> CENTER -> RIGHT -> null`. */
 fun cycleTableColumnAlignment(source: String, colIndex: Int): String? {
     val table = tableOf(source) ?: return null
@@ -133,3 +161,9 @@ private fun normalizedAlignments(table: TableModel): MutableList<TableAlignment?
 
 private fun normalizedRow(row: List<String>, colCount: Int): MutableList<String> =
     MutableList(colCount) { row.getOrElse(it) { "" } }
+
+private fun <T> MutableList<T>.swap(i: Int, j: Int) {
+    val tmp = this[i]
+    this[i] = this[j]
+    this[j] = tmp
+}

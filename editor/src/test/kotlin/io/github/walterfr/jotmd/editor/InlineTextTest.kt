@@ -1,9 +1,14 @@
 package io.github.walterfr.jotmd.editor
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
+import io.github.walterfr.jotmd.core.docRefsOf
+import io.github.walterfr.jotmd.core.parse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -315,6 +320,121 @@ class InlineTextTest {
 
             assertEquals(MdThemePreset.GITHUB, MdTokens.cycleThemePreset())
             assertEquals(LightMdPalette, MdTokens.palette)
+        } finally {
+            MdTokens.themePreset = MdThemePreset.GITHUB
+        }
+    }
+
+    @Test
+    fun `links de referência usam DocRefs e mantêm desconhecidos literais`() {
+        val doc = parse(
+            """
+            Veja [completo][Guia], [atalho], [colapsado][] e [faltando][nada].
+
+            [guia]: https://example.com/guia
+            [ATALHO]: https://example.com/atalho
+            [colapsado]: https://example.com/col
+            """.trimIndent(),
+        )
+        val refs = docRefsOf(doc)
+        val s = inlineText(doc.blocks[0].source, refs = refs)
+        assertEquals("Veja completo, atalho, colapsado e [faltando][nada].", s.text)
+        assertEquals(
+            listOf(
+                Triple("completo", "https://example.com/guia", 5),
+                Triple("atalho", "https://example.com/atalho", 15),
+                Triple("colapsado", "https://example.com/col", 23),
+            ),
+            links(s),
+        )
+    }
+
+    @Test
+    fun `notas de rodapé inline viram sobrescrito numerado com link interno`() {
+        val doc = parse(
+            """
+            Primeiro[^Beta], depois[^Alfa], desconhecida[^Missing] e código `[^Alfa]`.
+
+            [^alfa]: Nota A
+            [^beta]: Nota B
+            """.trimIndent(),
+        )
+        val refs = docRefsOf(doc)
+        val s = inlineText(doc.blocks[0].source, refs = refs)
+        assertEquals("Primeiro[1], depois[2], desconhecida[Missing] e código [^Alfa].", s.text)
+        assertEquals(
+            listOf(
+                Triple("[1]", "${FOOTNOTE_URI}beta", 8),
+                Triple("[2]", "${FOOTNOTE_URI}alfa", 19),
+                Triple("[Missing]", "${FOOTNOTE_URI}missing", 36),
+            ),
+            links(s),
+        )
+        val superscripts = s.spanStyles.filter { it.item.baselineShift == BaselineShift.Superscript }
+        assertEquals(3, superscripts.size)
+        assertTrue(superscripts.all { it.item.fontSize == MdTokens.base * 0.78f })
+    }
+
+    @Test
+    fun `LaTeX inline converte para Unicode e preserva subscritos sem virar ênfase`() {
+        val s = inlineText("Fórmula \$\\alpha + a_1 + x^2\$ e preço \$5 e \$10, código `\$x\$`.")
+        assertEquals("Fórmula α + a₁ + x² e preço \$5 e \$10, código \$x\$.", s.text)
+        val mathSpan = s.spanStyles.single {
+            it.item.fontFamily == FontFamily.Serif &&
+                it.item.fontStyle == FontStyle.Italic &&
+                it.item.background == MdTokens.inlineCodeBackground
+        }
+        assertEquals("α + a₁ + x²", s.text.substring(mathSpan.start, mathSpan.end))
+    }
+
+    @Test
+    fun `applySearchHighlight destaca ocorrências e ocorrência ativa preservando estilos`() {
+        val base = inlineText("um **alfa** e alfa e ALFA")
+        val highlighted = applySearchHighlight(
+            base = base,
+            query = "alfa",
+            caseSensitive = false,
+            wholeWord = true,
+            regex = false,
+            activeOccurrenceInBlock = 1,
+        )
+        assertEquals("um alfa e alfa e ALFA", highlighted.text)
+        // Mantém negrito no primeiro "alfa"
+        assertTrue(highlighted.spanStyles.any { it.item.fontWeight == FontWeight.Bold && it.start == 3 && it.end == 7 })
+
+        val hits = highlighted.spanStyles.filter { it.item.background == MdTokens.searchHitBackground }
+        val active = highlighted.spanStyles.filter {
+            it.item.background == MdTokens.searchActiveBackground && it.item.color == MdTokens.searchActiveText
+        }
+        assertEquals(2, hits.size)
+        assertEquals(1, active.size)
+        assertEquals(10, active.single().start)
+        assertEquals(14, active.single().end)
+
+        // Regex inválida não falha nem altera o texto
+        val invalid = applySearchHighlight(base, query = "[", regex = true)
+        assertEquals(base, invalid)
+
+        // inlineText com destaque ativo marca a 1ª ocorrência como ativa
+        val inline = inlineText("alfa e alfa", highlightQuery = "alfa", highlightActive = true)
+        assertTrue(inline.spanStyles.any { it.item.background == MdTokens.searchActiveBackground && it.start == 0 && it.end == 4 })
+        assertTrue(inline.spanStyles.any { it.item.background == MdTokens.searchHitBackground && it.start == 7 && it.end == 11 })
+    }
+
+    @Test
+    fun `MdTokens de busca e sintaxe reagem a isDark`() {
+        try {
+            MdTokens.themePreset = MdThemePreset.GITHUB
+            val lightHit = MdTokens.searchHitBackground
+            val lightKeyword = MdTokens.syntaxKeyword
+
+            MdTokens.themePreset = MdThemePreset.NIGHT
+            assertEquals(Color(0xCFC78C3C), MdTokens.searchHitBackground)
+            assertEquals(Color(0xFF428BCA), MdTokens.searchActiveBackground)
+            assertEquals(Color.White, MdTokens.searchActiveText)
+            assertEquals(Color(0xFFC88FD0), MdTokens.syntaxKeyword)
+            assertTrue(lightHit != MdTokens.searchHitBackground)
+            assertTrue(lightKeyword != MdTokens.syntaxKeyword)
         } finally {
             MdTokens.themePreset = MdThemePreset.GITHUB
         }

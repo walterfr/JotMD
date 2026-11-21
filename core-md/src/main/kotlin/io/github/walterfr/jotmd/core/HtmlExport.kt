@@ -21,7 +21,8 @@ fun exportToHtml(
     val doc = parse(markdown)
     val outline = outlineOf(doc)
     val outlineByBlock = outline.associateBy { it.blockId }
-    val body = renderBlocks(doc.blocks, outline, outlineByBlock)
+    val refs = docRefsOf(doc)
+    val body = renderBlocks(doc.blocks, outline, outlineByBlock, refs)
     return buildString {
         append("<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n")
         append("<title>").append(escapeHtml(title)).append("</title>\n")
@@ -39,26 +40,51 @@ private fun renderBlocks(
     blocks: List<Block>,
     outline: List<OutlineEntry> = emptyList(),
     outlineByBlock: Map<BlockId, OutlineEntry> = emptyMap(),
-): String = blocks.mapNotNull { renderBlock(it, outline, outlineByBlock) }.joinToString("\n")
+    refs: DocRefs = DocRefs.EMPTY,
+): String = blocks.mapNotNull { renderBlock(it, outline, outlineByBlock, refs) }.joinToString("\n")
 
 private fun renderBlock(
     block: Block,
     outline: List<OutlineEntry>,
     outlineByBlock: Map<BlockId, OutlineEntry>,
+    refs: DocRefs,
 ): String? = when (block.type) {
     BlockType.FRONT_MATTER -> renderFrontMatter(block.source)
-    BlockType.HEADING -> renderHeading(block.source, outlineByBlock[block.id]?.slug)
-    BlockType.BLOCKQUOTE -> renderBlockquote(block.source)
-    BlockType.UNORDERED_LIST, BlockType.ORDERED_LIST -> renderList(block.source)
+    BlockType.HEADING -> renderHeading(block.source, outlineByBlock[block.id]?.slug, refs)
+    BlockType.BLOCKQUOTE -> renderBlockquote(block.source, refs)
+    BlockType.UNORDERED_LIST, BlockType.ORDERED_LIST -> renderList(block.source, refs)
     BlockType.CODE_FENCE -> renderCodeFence(block.source)
     BlockType.CODE_INDENTED -> renderCodeIndented(block.source)
-    BlockType.TABLE -> renderTable(block.source)
+    BlockType.TABLE -> renderTable(block.source, refs)
     BlockType.HORIZONTAL_RULE -> "<hr />"
-    BlockType.LINK_DEFINITION -> null
-    BlockType.PARAGRAPH ->
-        if (isTocMarker(block.source)) renderToc(outline) else "<p>${renderInline(block.source)}</p>"
-    BlockType.OTHER, BlockType.HTML -> "<p>${renderInline(block.source)}</p>"
+    BlockType.LINK_DEFINITION ->
+        if (isFootnoteDefinitionBlock(block.source)) renderFootnoteDefinitions(block.source, refs) else null
+    BlockType.PARAGRAPH -> when {
+        isTocMarker(block.source) -> renderToc(outline)
+        else -> {
+            val mathExpr = extractMathBlock(block.source)
+            when {
+                mathExpr != null -> renderMathBlock(mathExpr)
+                isFootnoteDefinitionBlock(block.source) -> renderFootnoteDefinitions(block.source, refs)
+                else -> "<p>${renderInline(block.source, refs)}</p>"
+            }
+        }
+    }
+    BlockType.OTHER, BlockType.HTML ->
+        if (isFootnoteDefinitionBlock(block.source)) renderFootnoteDefinitions(block.source, refs)
+        else "<p>${renderInline(block.source, refs)}</p>"
 }
+
+private fun renderMathBlock(expr: String): String =
+    "<div class=\"md-math-block\">${escapeHtml(renderLatexToUnicode(expr))}</div>"
+
+private fun renderFootnoteDefinitions(source: String, refs: DocRefs): String =
+    parseFootnoteDefinitions(source).joinToString("\n") { (id, content) ->
+        val norm = normalizeRefLabel(id)
+        val num = refs.footnoteNumber(id) ?: 1
+        "<div class=\"md-footnote-def\" id=\"fn-${escapeHtml(norm)}\">" +
+            "<span class=\"md-footnote-num\">[$num]</span> ${renderInline(content, refs)}</div>"
+    }
 
 private fun renderToc(outline: List<OutlineEntry>): String = buildString {
     append("<div class=\"md-toc\" role=\"navigation\"><p class=\"md-toc-content\">")
@@ -77,7 +103,7 @@ private fun renderFrontMatter(source: String): String {
     return "<pre class=\"md-meta-block\">${escapeHtml(yaml)}</pre>"
 }
 
-private fun renderHeading(source: String, slug: String?): String {
+private fun renderHeading(source: String, slug: String?, refs: DocRefs): String {
     val root = astOf(source)
     val node = root.children.firstOrNull { it.type in HEADING_TYPES }
     val level = when (node?.type) {
@@ -94,7 +120,7 @@ private fun renderHeading(source: String, slug: String?): String {
         ?: node
         ?: root
     val html = buildString {
-        appendChildren(contentNode, InlineCtx.of(source, root), emptySet())
+        appendChildren(contentNode, InlineCtx.of(source, root, refs), emptySet())
     }.trimEnd()
     val idAttr = if (slug != null) " id=\"${escapeHtml(slug)}\"" else ""
     return "<h$level$idAttr>$html</h$level>"
@@ -108,31 +134,31 @@ private fun fallbackHeadingLevel(source: String): Int {
 
 private val QUOTE_LINE_PREFIX = Regex("""^\s*>\s?""")
 
-private fun renderBlockquote(source: String): String {
+private fun renderBlockquote(source: String, refs: DocRefs): String {
     val alert = alertOf(source)
     if (alert != null) {
-        val inner = if (alert.body.isEmpty()) "" else renderInnerMarkdown(alert.body)
+        val inner = if (alert.body.isEmpty()) "" else renderInnerMarkdown(alert.body, refs)
         return "<div class=\"md-alert md-alert-${alert.kind.tag}\">" +
             "<p class=\"md-alert-title\">${alert.kind.label}</p>" +
             "$inner</div>"
     }
     val stripped = source.lines().joinToString("\n") { it.replaceFirst(QUOTE_LINE_PREFIX, "") }
-    val inner = if (stripped == source) "<p>${renderInline(source)}</p>" else renderInnerMarkdown(stripped)
+    val inner = if (stripped == source) "<p>${renderInline(source, refs)}</p>" else renderInnerMarkdown(stripped, refs)
     return "<blockquote>$inner</blockquote>"
 }
 
-private fun renderInnerMarkdown(markdown: String): String {
+private fun renderInnerMarkdown(markdown: String, refs: DocRefs): String {
     val blocks = parse(markdown, frontMatter = false).blocks
     if (blocks.isEmpty()) return ""
-    return renderBlocks(blocks)
+    return renderBlocks(blocks, refs = refs)
 }
 
-private fun renderList(source: String): String {
+private fun renderList(source: String, refs: DocRefs): String {
     val root = astOf(source)
-    val ctx = InlineCtx.of(source, root)
+    val ctx = InlineCtx.of(source, root, refs)
     val listNode = root.children.firstOrNull {
         it.type == MarkdownElementTypes.UNORDERED_LIST || it.type == MarkdownElementTypes.ORDERED_LIST
-    } ?: return "<p>${renderInline(source)}</p>"
+    } ?: return "<p>${renderInline(source, refs)}</p>"
     return buildString { appendListNode(listNode, ctx) }
 }
 
@@ -202,7 +228,7 @@ private fun StringBuilder.appendListItem(item: ASTNode, ctx: InlineCtx) {
                     append(checkHtml)
                     if (sub.isNotBlank()) append(' ')
                 }
-                append(renderInnerMarkdown(sub))
+                append(renderInnerMarkdown(sub, ctx.refs))
             }
         }
     }
@@ -245,19 +271,19 @@ private enum class TableAlign(val css: String) {
     RIGHT("right"),
 }
 
-private fun renderTable(source: String): String {
+private fun renderTable(source: String, refs: DocRefs): String {
     val root = astOf(source)
     val tableNode = root.children.firstOrNull { it.type == GFMElementTypes.TABLE }
-        ?: return "<p>${renderInline(source)}</p>"
+        ?: return "<p>${renderInline(source, refs)}</p>"
     val lines = source.lineSequence().filter { it.isNotBlank() }.toList()
-    if (lines.size < 2) return "<p>${renderInline(source)}</p>"
+    if (lines.size < 2) return "<p>${renderInline(source, refs)}</p>"
 
     val headers = tableNode.pick(GFMElementTypes.HEADER)
         ?.children
         ?.filter { it.type == GFMTokenTypes.CELL }
         ?.map { it.getTextInNode(source).toString().trim() }
         ?: splitTableCells(lines[0])
-    if (headers.isEmpty()) return "<p>${renderInline(source)}</p>"
+    if (headers.isEmpty()) return "<p>${renderInline(source, refs)}</p>"
 
     val alignments = splitTableCells(lines[1]).map { sep ->
         val left = sep.startsWith(":")
@@ -282,13 +308,13 @@ private fun renderTable(source: String): String {
     return buildString {
         append("<table>\n<thead>\n<tr>")
         for ((col, cell) in headers.withIndex()) {
-            appendCell("th", cell, alignments.getOrNull(col))
+            appendCell("th", cell, alignments.getOrNull(col), refs)
         }
         append("</tr>\n</thead>\n<tbody>\n")
         for (row in rows) {
             append("<tr>")
             for ((col, cell) in row.withIndex()) {
-                appendCell("td", cell, alignments.getOrNull(col))
+                appendCell("td", cell, alignments.getOrNull(col), refs)
             }
             append("</tr>\n")
         }
@@ -296,10 +322,10 @@ private fun renderTable(source: String): String {
     }
 }
 
-private fun StringBuilder.appendCell(tag: String, raw: String, align: TableAlign?) {
+private fun StringBuilder.appendCell(tag: String, raw: String, align: TableAlign?, refs: DocRefs) {
     val styleAttr = if (align != null) " style=\"text-align: ${align.css}\"" else ""
     append('<').append(tag).append(styleAttr).append('>')
-    append(renderInline(raw))
+    append(renderInline(raw, refs))
     append("</").append(tag).append('>')
 }
 
@@ -309,10 +335,10 @@ private fun splitTableCells(line: String): List<String> =
 private fun padCells(cells: List<String>, size: Int): List<String> =
     if (cells.size >= size) cells.take(size) else cells + List(size - cells.size) { "" }
 
-private fun renderInline(source: String): String {
+private fun renderInline(source: String, refs: DocRefs = DocRefs.EMPTY): String {
     val root = astOf(source)
     return buildString {
-        appendChildren(root, InlineCtx.of(source, root), emptySet())
+        appendChildren(root, InlineCtx.of(source, root, refs), emptySet())
     }.trimEnd('\n')
 }
 
@@ -326,6 +352,7 @@ private val UNDERLINE_REGEX = Regex("""<u>([^\r\n]+?)</u>""", RegexOption.IGNORE
 
 private class InlineCtx private constructor(
     val src: String,
+    val refs: DocRefs,
     val specials: List<HtmlSpecial>,
 ) {
     fun coversNode(node: ASTNode): Boolean {
@@ -335,7 +362,7 @@ private class InlineCtx private constructor(
     }
 
     companion object {
-        fun of(src: String, root: ASTNode): InlineCtx {
+        fun of(src: String, root: ASTNode, refs: DocRefs = DocRefs.EMPTY): InlineCtx {
             val skips = buildList { collectRanges(root, SKIP_TYPES, this) }
             val nodeBounds = buildList { collectElementRanges(root, this) }
 
@@ -348,26 +375,42 @@ private class InlineCtx private constructor(
                     html = "<a class=\"md-wikilink\" href=\"#${escapeHtml(dest)}\">${escapeHtml(display)}</a>",
                 )
             }
-            val tags = tagSpansIn(src).map { (range, _) ->
+            val maths = inlineMathSpansIn(src, skips).map { (range, latex) ->
+                HtmlSpecial(
+                    range = range,
+                    html = "<span class=\"md-inline-math\">${escapeHtml(renderLatexToUnicode(latex))}</span>",
+                )
+            }
+            val mathRanges = maths.map { it.range }
+            val footnotes = footnoteRefSpansIn(src, skips + mathRanges).mapNotNull { (range, id) ->
+                val num = refs.footnoteNumber(id) ?: return@mapNotNull null
+                val norm = normalizeRefLabel(id)
+                HtmlSpecial(
+                    range = range,
+                    html = "<sup class=\"md-footnote\"><a href=\"#fn-${escapeHtml(norm)}\">[$num]</a></sup>",
+                )
+            }
+            val tags = tagSpansIn(src).mapNotNull { (range, _) ->
+                if (mathRanges.any { r -> range.first <= r.last && r.first <= range.last }) return@mapNotNull null
                 HtmlSpecial(
                     range = range,
                     html = "<span class=\"md-tag\">${escapeHtml(src.substring(range))}</span>",
                 )
             }
-            val masked = maskRanges(src, skips)
+            val masked = maskRanges(src, skips + mathRanges)
             val marks = findRegexSpecials(src, masked, nodeBounds, HIGHLIGHT_REGEX, 2) { inner ->
-                "<mark>${renderInline(inner)}</mark>"
+                "<mark>${renderInline(inner, refs)}</mark>"
             }
             val underlines = findRegexSpecials(src, masked, nodeBounds, UNDERLINE_REGEX, 3) { inner ->
-                "<u>${renderInline(inner)}</u>"
+                "<u>${renderInline(inner, refs)}</u>"
             }
 
-            val sorted = (wikis + tags + marks + underlines).sortedBy { it.range.first }
+            val sorted = (wikis + maths + footnotes + tags + marks + underlines).sortedBy { it.range.first }
             val kept = ArrayList<HtmlSpecial>()
             for (s in sorted) {
                 if (kept.isEmpty() || s.range.first > kept.last().range.last) kept += s
             }
-            return InlineCtx(src, kept)
+            return InlineCtx(src, refs, kept)
         }
 
         private fun collectRanges(node: ASTNode, types: Set<IElementType>, out: MutableList<IntRange>) {
@@ -510,7 +553,8 @@ private fun StringBuilder.appendNode(node: ASTNode, ctx: InlineCtx) {
 
         MarkdownElementTypes.INLINE_LINK,
         MarkdownElementTypes.FULL_REFERENCE_LINK,
-        MarkdownElementTypes.SHORT_REFERENCE_LINK -> appendLink(node, ctx)
+        MarkdownElementTypes.SHORT_REFERENCE_LINK,
+        MarkdownElementTypes.LINK_LABEL -> appendLink(node, ctx)
 
         MarkdownElementTypes.IMAGE -> appendImage(node, ctx)
 
@@ -549,12 +593,19 @@ private fun StringBuilder.appendCodeSpan(node: ASTNode, ctx: InlineCtx) {
 }
 
 private fun StringBuilder.appendLink(node: ASTNode, ctx: InlineCtx) {
-    val label = node.pick(MarkdownElementTypes.LINK_TEXT) ?: node.pick(MarkdownElementTypes.LINK_LABEL)
-    val url = node.pick(MarkdownElementTypes.LINK_DESTINATION)
+    val refLabelNode = if (node.type == MarkdownElementTypes.LINK_LABEL) {
+        node
+    } else {
+        node.pick(MarkdownElementTypes.LINK_LABEL)
+    }
+    val label = node.pick(MarkdownElementTypes.LINK_TEXT) ?: refLabelNode
+    val directUrl = node.pick(MarkdownElementTypes.LINK_DESTINATION)
         ?.getTextInNode(ctx.src)
         ?.toString()
         ?.trim()
         ?.removeSurrounding("<", ">")
+    val refName = refLabelNode?.getTextInNode(ctx.src)?.toString()?.removeSurrounding("[", "]")
+    val url = directUrl ?: refName?.let { ctx.refs.resolveLink(it) }
     if (url == null) {
         appendSource(node.startOffset, node.endOffset, ctx)
         return
@@ -565,13 +616,19 @@ private fun StringBuilder.appendLink(node: ASTNode, ctx: InlineCtx) {
 }
 
 private fun StringBuilder.appendImage(node: ASTNode, ctx: InlineCtx) {
-    val linkNode = node.pick(MarkdownElementTypes.INLINE_LINK) ?: node
-    val label = linkNode.pick(MarkdownElementTypes.LINK_TEXT)
+    val linkNode = node.pick(MarkdownElementTypes.INLINE_LINK)
+        ?: node.pick(MarkdownElementTypes.FULL_REFERENCE_LINK)
+        ?: node.pick(MarkdownElementTypes.SHORT_REFERENCE_LINK)
+        ?: node
+    val refLabelNode = linkNode.pick(MarkdownElementTypes.LINK_LABEL)
+    val label = linkNode.pick(MarkdownElementTypes.LINK_TEXT) ?: refLabelNode
+    val refName = refLabelNode?.getTextInNode(ctx.src)?.toString()?.removeSurrounding("[", "]")
     val src = linkNode.pick(MarkdownElementTypes.LINK_DESTINATION)
         ?.getTextInNode(ctx.src)
         ?.toString()
         ?.trim()
         ?.removeSurrounding("<", ">")
+        ?: refName?.let { ctx.refs.resolveLink(it) }
     if (src == null) {
         appendSource(node.startOffset, node.endOffset, ctx)
         return
@@ -718,6 +775,11 @@ private fun buildCss(darkTheme: Boolean): String {
         input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }
         img { max-width: 100%; height: auto; }
         .md-tag { color: $link; }
+        .md-math-block { text-align: center; background: $fenceBg; border: 1px solid $codeBorder; border-radius: 3px; padding: 10px 16px; margin: 0.8em 0; font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; font-size: 1.08em; overflow-x: auto; white-space: pre-wrap; }
+        .md-inline-math { font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; padding: 0 2px; }
+        .md-footnote a { text-decoration: none; }
+        .md-footnote-def { font-size: 0.9em; color: $muted; margin: 0.4em 0; padding-left: 0.6em; border-left: 2px solid $quoteBorder; }
+        .md-footnote-num { font-weight: bold; color: $link; margin-right: 4px; }
         .md-toc { margin: 1em 0; padding: 0.4em 0; }
         .md-toc-content { margin: 0; font-size: 0.95em; }
         .md-toc-item { display: block; margin: 0.2em 0; }

@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
+import io.github.walterfr.jotmd.core.docRefsOf
 import io.github.walterfr.jotmd.core.outlineOf
 
 /**
@@ -36,6 +37,7 @@ fun EditorScreen(
     listState: LazyListState = rememberLazyListState(),
 ) {
     val outline = remember(state.doc) { outlineOf(state.doc) }
+    val refs = remember(state.doc) { docRefsOf(state.doc) }
     var viewportHeightPx by remember { mutableStateOf(0) }
 
     LaunchedEffect(state.isTypewriterMode, state.focusedId, state.editValue.selection, viewportHeightPx) {
@@ -83,6 +85,7 @@ fun EditorScreen(
                         state = state,
                         modifier = Modifier.widthIn(max = maxWidth).fillMaxWidth(),
                         outline = outline,
+                        refs = refs,
                     )
                 }
             }

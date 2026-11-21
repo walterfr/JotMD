@@ -710,4 +710,152 @@ class EditorStateTest {
         s.undo()
         assertEquals(3, tableOf(s.doc.blocks[1].source)?.headers?.size)
     }
+
+    @Test
+    fun `setSearchHighlight e clearSearchHighlight atualizam estado e load limpa destaque`() {
+        val s = EditorState("um alfa\n\ndois alfa\n")
+        val matches = findInDocument(s.doc, "alfa")
+        assertEquals(2, matches.size)
+
+        s.setSearchHighlight(
+            query = "a.*a",
+            caseSensitive = true,
+            wholeWord = false,
+            regex = true,
+            activeMatch = matches[1],
+        )
+        assertEquals("a.*a", s.searchHighlightQuery)
+        assertTrue(s.searchHighlightCaseSensitive)
+        assertFalse(s.searchHighlightWholeWord)
+        assertTrue(s.searchHighlightRegex)
+        assertEquals(matches[1], s.activeSearchMatch)
+
+        s.clearSearchHighlight()
+        assertEquals("", s.searchHighlightQuery)
+        assertFalse(s.searchHighlightCaseSensitive)
+        assertFalse(s.searchHighlightRegex)
+        assertNull(s.activeSearchMatch)
+
+        s.setSearchHighlight("alfa", activeMatch = matches[0])
+        s.load("outro\n")
+        assertEquals("", s.searchHighlightQuery)
+        assertNull(s.activeSearchMatch)
+    }
+
+    @Test
+    fun `replaceAll com regex substitui padrões e desfaz em um passo`() {
+        val s = EditorState("item-12 e item-34\n")
+        assertEquals(2, s.replaceAll("""item-\d+""", "X", regex = true))
+        assertEquals("X e X\n", s.text())
+        s.undo()
+        assertEquals("item-12 e item-34\n", s.text())
+    }
+
+    @Test
+    fun `insertTable converte bloco vazio, divide bloco com texto ou anexa sem foco`() {
+        // 1. Documento vazio (sem foco) e bloco focado vazio viram tabela mantendo foco
+        val empty = EditorState("")
+        assertTrue(empty.insertTable(cols = 2, dataRows = 2))
+        assertEquals(1, empty.doc.blocks.size)
+        assertEquals(BlockType.TABLE, empty.doc.blocks[0].type)
+        assertEquals(empty.doc.blocks[0].id, empty.focusedId)
+        assertEquals(2, tableOf(empty.doc.blocks[0].source)?.headers?.size)
+        assertEquals(2, tableOf(empty.doc.blocks[0].source)?.rows?.size)
+
+        val emptyFocused = EditorState("a\n")
+        val emptyBlockId = emptyFocused.doc.blocks[0].id
+        emptyFocused.focus(emptyFocused.doc.blocks[0])
+        emptyFocused.edit(TextFieldValue("", TextRange(0)))
+        assertTrue(emptyFocused.insertTable(cols = 2, dataRows = 1))
+        assertEquals(1, emptyFocused.doc.blocks.size)
+        assertEquals(BlockType.TABLE, emptyFocused.doc.blocks[0].type)
+        assertEquals(emptyBlockId, emptyFocused.focusedId)
+
+        // 2. Bloco com seleção substitui a seleção e divide o bloco ao redor da tabela
+        val split = EditorState("antes meio depois\n")
+        split.focus(split.doc.blocks[0])
+        split.edit(TextFieldValue("antes meio depois", TextRange(6, 10))) // "meio"
+        assertTrue(split.insertTable(cols = 3, dataRows = 1))
+        assertEquals(3, split.doc.blocks.size)
+        assertEquals("antes ", split.doc.blocks[0].source)
+        assertEquals(BlockType.TABLE, split.doc.blocks[1].type)
+        assertEquals(" depois", split.doc.blocks[2].source)
+        assertEquals(split.doc.blocks[1].id, split.focusedId)
+
+        split.undo()
+        assertEquals(1, split.doc.blocks.size)
+        assertEquals("antes meio depois", split.doc.blocks[0].source)
+
+        // 3. Sem foco, anexa nova tabela ao fim do documento
+        val tail = EditorState("parágrafo\n")
+        assertTrue(tail.insertTable(cols = 2, dataRows = 1))
+        assertEquals(2, tail.doc.blocks.size)
+        assertEquals(BlockType.TABLE, tail.doc.blocks[1].type)
+        assertEquals(tail.doc.blocks[1].id, tail.focusedId)
+    }
+
+    @Test
+    fun `tableMoveColumn move coluna no EditorState e registra undo`() {
+        val table = "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n"
+        val s = EditorState("intro\n\n$table")
+        val tableBlock = s.doc.blocks[1]
+        s.focus(tableBlock)
+
+        assertFalse(s.tableMoveColumn(s.doc.blocks[0].id, 0, 1))
+        assertFalse(s.tableMoveColumn(tableBlock.id, 0, -1))
+        assertTrue(s.tableMoveColumn(tableBlock.id, 0, 1))
+        assertEquals(listOf("B", "A", "C"), tableOf(s.doc.blocks[1].source)?.headers)
+        assertEquals(s.doc.blocks[1].source, s.editValue.text)
+
+        s.undo()
+        assertEquals(listOf("A", "B", "C"), tableOf(s.doc.blocks[1].source)?.headers)
+    }
+
+    @Test
+    fun `pasteMarkdownAtCursor substitui seleção, faz reparse em blocos compostos e anexa sem foco`() {
+        val s = EditorState("topo\n\num X tres\n")
+        val topoId = s.doc.blocks[0].id
+        s.focus(s.doc.blocks[1])
+        s.edit(TextFieldValue("um X tres", TextRange(3, 4))) // "X"
+        assertFalse(s.pasteMarkdownAtCursor(""))
+
+        // Cola inline com CRLF normalizado
+        assertTrue(s.pasteMarkdownAtCursor("**dois**"))
+        assertEquals("um **dois** tres", s.doc.blocks[1].source)
+        assertEquals(TextRange(11), s.editValue.selection)
+
+        // Cola composta com \n\n preserva IDs anteriores e foca após o trecho colado
+        Thread.sleep(600)
+        s.edit(TextFieldValue("um **dois** tres", TextRange(16)))
+        assertTrue(s.pasteMarkdownAtCursor("\r\n\r\n## Sub\r\n\r\nfim"))
+        assertEquals(topoId, s.doc.blocks[0].id)
+        assertTrue(s.doc.blocks.any { it.type == BlockType.HEADING && it.source == "## Sub" })
+        assertEquals("fim", s.doc.blocks.last().source)
+        assertEquals(s.doc.blocks.last().id, s.focusedId)
+        assertEquals(TextRange(3), s.editValue.selection)
+
+        s.undo()
+        assertEquals("um **dois** tres", s.doc.blocks[1].source)
+
+        // Sem foco: anexa ao documento
+        val un = EditorState("primeiro\n")
+        assertTrue(un.pasteMarkdownAtCursor("segundo\n\n- item"))
+        assertEquals(3, un.doc.blocks.size)
+        assertEquals(BlockType.UNORDERED_LIST, un.doc.blocks.last().type)
+        assertEquals(un.doc.blocks.last().id, un.focusedId)
+    }
+
+    @Test
+    fun `pasteHtmlAtCursor e insertImageMarkdown delegam corretamente`() {
+        val s = EditorState("olá \n")
+        s.focus(s.doc.blocks[0])
+        s.edit(TextFieldValue("olá ", TextRange(4)))
+
+        assertTrue(s.pasteHtmlAtCursor("<strong>mundo</strong>"))
+        assertEquals("olá **mundo**", s.doc.blocks[0].source)
+
+        assertFalse(s.insertImageMarkdown("alt", "   "))
+        assertTrue(s.insertImageMarkdown("logo", "assets/logo.png"))
+        assertEquals("olá **mundo**![logo](assets/logo.png)", s.doc.blocks[0].source)
+    }
 }

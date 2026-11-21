@@ -229,6 +229,21 @@ object MdTokens {
     val highlightBackground: Color get() = palette.highlightBackground
     val highlightText: Color get() = palette.highlightText
 
+    /** Destaques de ocorrências de busca na nota (`--search-select-bg-color` / `.md-search-hit`). */
+    val searchHitBackground: Color get() = if (isDark) Color(0xCFC78C3C) else Color(0x4DF8C074)
+    val searchActiveBackground: Color get() = Color(0xFF428BCA)
+    val searchActiveText: Color get() = Color.White
+
+    /** Realce sintático para cercas de código e modo código-fonte (`codeblock.dark.css` / `sourcemode.dark.css`). */
+    val syntaxKeyword: Color get() = if (isDark) Color(0xFFC88FD0) else Color(0xFFA71D5D)
+    val syntaxString: Color get() = if (isDark) Color(0xFFD26B6B) else Color(0xFF183691)
+    val syntaxComment: Color get() = if (isDark) Color(0xFFDA924A) else Color(0xFF6A737D)
+    val syntaxNumber: Color get() = if (isDark) Color(0xFF64AB8F) else Color(0xFF005CC5)
+    val syntaxType: Color get() = if (isDark) Color(0xFF8D8DF0) else Color(0xFF6F42C1)
+    val syntaxHeading: Color get() = if (isDark) Color(0xFFCEBCCA) else Color(0xFF9B2393)
+    val syntaxMarker: Color get() = if (isDark) Color(0xFF8AA1E1) else Color(0xFF6E7781)
+    val syntaxLink: Color get() = if (isDark) Color(0xFF95B94B) else Color(0xFF0969DA)
+
     /** `margin: 0.8em 0` nos blocos. 0.8 * 16 = 12.8 */
     val blockGap = 12.8.dp
 

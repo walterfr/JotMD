@@ -1,0 +1,6 @@
+Versão 0.3.0 (Pride Versioning):
+- Busca com regex (.*) e destaque visual das ocorrências no editor
+- Realce sintático em cercas de código e no modo código-fonte
+- Links por referência, notas de rodapé ([^id]) e LaTeX ($...$/$$...$$)
+- Inserção de tabela 3x4, movimentação de colunas e Colar+ (HTML→MD / imagem)
+- Sumário [TOC] no PDF e CRUD de notas/pastas no Android (SAF) e Desktop

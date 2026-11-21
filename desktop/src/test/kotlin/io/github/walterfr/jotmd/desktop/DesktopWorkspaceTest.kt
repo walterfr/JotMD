@@ -4,11 +4,18 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import io.github.walterfr.jotmd.editor.resolveLocalImageFile
 import org.junit.jupiter.api.io.TempDir
+import java.awt.datatransfer.Clipboard
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.StringSelection
+import java.awt.datatransfer.Transferable
+import java.awt.datatransfer.UnsupportedFlavorException
+import java.awt.image.BufferedImage
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -241,5 +248,223 @@ class DesktopWorkspaceTest {
             Files.writeString(root.resolve("novo.md"), "# Novo\n", StandardCharsets.UTF_8)
             assertTrue(latch.await(5, TimeUnit.SECONDS), "DirectoryTreeWatcher deveria notificar criação de .md")
         }
+    }
+
+    @Test
+    fun `listDesktopTree com includeEmptyDirs true inclui pastas vazias e mantem ocultas ignoradas`(@TempDir root: Path) {
+        Files.createDirectories(root.resolve(".git/objects"))
+        Files.createDirectories(root.resolve("vazia/aninhada"))
+        Files.writeString(root.resolve("nota.md"), "# Nota\n", StandardCharsets.UTF_8)
+
+        assertEquals(listOf("nota.md"), listDesktopTree(root).map { it.name })
+
+        val withEmpty = listDesktopTree(root, includeEmptyDirs = true)
+        assertEquals(
+            listOf("vazia" to true, "aninhada" to true, "nota.md" to false),
+            withEmpty.map { it.name to it.isDir },
+        )
+        assertEquals(listOf(0, 1, 0), withEmpty.map { it.depth })
+    }
+
+    @Test
+    fun `sanitizeDesktopEntryName garante extensao, limpa caracteres invalidos e bloqueia traversal`() {
+        assertEquals("Minha Nota.md", sanitizeDesktopEntryName("  Minha Nota  ", ensureMarkdownExtension = true))
+        assertEquals("doc.markdown", sanitizeDesktopEntryName("doc.markdown", ensureMarkdownExtension = true))
+        assertEquals("Pasta 01", sanitizeDesktopEntryName("  Pasta 01  ", ensureMarkdownExtension = false))
+        assertEquals("nota 1.md", sanitizeDesktopEntryName("nota: 1?", ensureMarkdownExtension = true))
+
+        assertEquals("", sanitizeDesktopEntryName("../escape", ensureMarkdownExtension = true))
+        assertEquals("", sanitizeDesktopEntryName("..\\escape", ensureMarkdownExtension = false))
+        assertEquals("", sanitizeDesktopEntryName("sub/nota", ensureMarkdownExtension = true))
+        assertEquals("", sanitizeDesktopEntryName(".", ensureMarkdownExtension = true))
+        assertEquals("", sanitizeDesktopEntryName("..", ensureMarkdownExtension = false))
+        assertEquals("", sanitizeDesktopEntryName(".oculto", ensureMarkdownExtension = true))
+        assertEquals("", sanitizeDesktopEntryName(".md", ensureMarkdownExtension = true))
+        assertEquals("", sanitizeDesktopEntryName("   ", ensureMarkdownExtension = true))
+    }
+
+    @Test
+    fun `CRUD de arquivos e pastas cria, renomeia, exclui e bloqueia traversal e sobrescrita`(@TempDir root: Path) {
+        val sub = assertNotNull(createDesktopFolder(root, "SubPasta"))
+        assertTrue(Files.isDirectory(sub))
+        assertNull(createDesktopFolder(root, "SubPasta"))
+        assertNull(createDesktopFolder(sub, "../fora"))
+
+        val nota = assertNotNull(createDesktopMarkdownFile(sub, "Ideias"))
+        assertEquals(sub.resolve("Ideias.md"), nota)
+        assertTrue(Files.isRegularFile(nota))
+        Files.writeString(nota, "conteúdo protegido", StandardCharsets.UTF_8)
+
+        assertNull(createDesktopMarkdownFile(sub, "Ideias.md"))
+        assertEquals("conteúdo protegido", Files.readString(nota, StandardCharsets.UTF_8))
+
+        assertNull(createDesktopMarkdownFile(sub, "../escape"))
+        assertFalse(Files.exists(root.resolve("escape.md")))
+
+        val outra = assertNotNull(createDesktopMarkdownFile(sub, "Outra"))
+        assertNull(renameDesktopEntry(nota, "Outra.md"))
+        assertNull(renameDesktopEntry(nota, "../escape.md"))
+
+        val renomeada = assertNotNull(renameDesktopEntry(nota, "Plano Final"))
+        assertEquals(sub.resolve("Plano Final.md"), renomeada)
+        assertFalse(Files.exists(nota))
+        assertEquals("conteúdo protegido", Files.readString(renomeada, StandardCharsets.UTF_8))
+
+        val subRenomeada = assertNotNull(renameDesktopEntry(sub, "Arquivos"))
+        assertEquals(root.resolve("Arquivos"), subRenomeada)
+        assertTrue(Files.isRegularFile(subRenomeada.resolve("Plano Final.md")))
+        assertTrue(Files.isRegularFile(subRenomeada.resolve("Outra.md")))
+
+        assertTrue(deleteDesktopEntry(subRenomeada))
+        assertFalse(Files.exists(subRenomeada))
+        assertFalse(deleteDesktopEntry(subRenomeada))
+    }
+
+    @Test
+    fun `DesktopTabManager updateRenamedPath atualiza arquivo e pasta pai sem afetar prefixos parecidos`(@TempDir root: Path) {
+        val pasta = Files.createDirectories(root.resolve("pasta"))
+        val sub = Files.createDirectories(pasta.resolve("sub"))
+        val pasta2 = Files.createDirectories(root.resolve("pasta2"))
+        val a = pasta.resolve("a.md")
+        val b = sub.resolve("b.md")
+        val x = pasta2.resolve("x.md")
+        Files.writeString(a, "A\n", StandardCharsets.UTF_8)
+        Files.writeString(b, "B\n", StandardCharsets.UTF_8)
+        Files.writeString(x, "X\n", StandardCharsets.UTF_8)
+
+        val manager = DesktopTabManager()
+        val tabA = assertNotNull(manager.openOrFocus(a))
+        val tabB = assertNotNull(manager.openOrFocus(b))
+        val tabX = assertNotNull(manager.openOrFocus(x))
+
+        val aRenomeado = assertNotNull(renameDesktopEntry(a, "a2.md"))
+        manager.updateRenamedPath(a, aRenomeado)
+        assertEquals(aRenomeado.toAbsolutePath().normalize(), tabA.file)
+        assertEquals("a2.md", tabA.title)
+
+        val novaPasta = assertNotNull(renameDesktopEntry(pasta, "nova"))
+        manager.updateRenamedPath(pasta, novaPasta)
+        assertEquals(novaPasta.resolve("a2.md").toAbsolutePath().normalize(), tabA.file)
+        assertEquals(novaPasta.resolve("sub/b.md").toAbsolutePath().normalize(), tabB.file)
+        assertEquals("b.md", tabB.title)
+        assertEquals(x.toAbsolutePath().normalize(), tabX.file)
+    }
+
+    @Test
+    fun `DesktopTabManager closeRemovedPath fecha abas removidas sem regravar e abre Sem Titulo quando vazio`(@TempDir root: Path) {
+        val pasta = Files.createDirectories(root.resolve("pasta"))
+        val a = pasta.resolve("a.md")
+        val outro = root.resolve("outro.md")
+        Files.writeString(a, "A\n", StandardCharsets.UTF_8)
+        Files.writeString(outro, "Outro\n", StandardCharsets.UTF_8)
+
+        val manager = DesktopTabManager()
+        val tabA = assertNotNull(manager.openOrFocus(a))
+        tabA.editorState.focus(tabA.editorState.doc.blocks.first())
+        tabA.editorState.edit(TextFieldValue("alterado sem salvar", TextRange(19)))
+        val tabOutro = assertNotNull(manager.openOrFocus(outro))
+        manager.select(tabA.id)
+
+        assertTrue(deleteDesktopEntry(pasta))
+        manager.closeRemovedPath(pasta)
+
+        assertFalse(Files.exists(pasta))
+        assertEquals(listOf(tabOutro.id), manager.tabs.map { it.id })
+        assertEquals(tabOutro.id, manager.activeTabId)
+
+        assertTrue(deleteDesktopEntry(outro))
+        manager.closeRemovedPath(outro)
+
+        assertEquals(1, manager.tabs.size)
+        val fresh = assertNotNull(manager.activeTab)
+        assertEquals("Sem Título", fresh.title)
+        assertNull(fresh.file)
+    }
+
+    @Test
+    fun `saveClipboardImagePng cria PNG em typora-user-images resolvivel pelo ImagePreview`(@TempDir root: Path) {
+        val sub = Files.createDirectories(root.resolve("notas"))
+        val activeFile = sub.resolve("nota.md")
+        val img = BufferedImage(8, 8, BufferedImage.TYPE_INT_ARGB)
+
+        val dest = assertNotNull(
+            saveClipboardImagePng(
+                image = img,
+                activeFile = activeFile,
+                rootDir = root,
+                timestamp = "20261121-153000",
+            ),
+        )
+        val expectedFile = sub.resolve("typora-user-images/image-20261121-153000.png")
+        assertTrue(Files.isRegularFile(expectedFile))
+        val decoded = assertNotNull(ImageIO.read(expectedFile.toFile()))
+        assertEquals(8, decoded.width)
+        assertEquals(8, decoded.height)
+        assertNotNull(resolveLocalImageFile(dest))
+
+        val second = assertNotNull(
+            saveClipboardImagePng(
+                image = img,
+                activeFile = null,
+                rootDir = root,
+                timestamp = "20261121-153000",
+            ),
+        )
+        assertTrue(Files.isRegularFile(root.resolve("typora-user-images/image-20261121-153000.png")))
+        assertNotNull(resolveLocalImageFile(second))
+
+        val third = assertNotNull(
+            saveClipboardImagePng(
+                image = img,
+                activeFile = null,
+                rootDir = root,
+                timestamp = "20261121-153000",
+            ),
+        )
+        assertTrue(Files.isRegularFile(root.resolve("typora-user-images/image-20261121-153000-1.png")))
+        assertNotNull(resolveLocalImageFile(third))
+        assertNull(saveClipboardImagePng(img, activeFile = null, rootDir = null, timestamp = "1"))
+    }
+
+    @Test
+    fun `readClipboardPayload respeita prioridade imagem, HTML e texto`() {
+        val clipboard = Clipboard("test-jotmd")
+
+        clipboard.setContents(StringSelection("texto simples"), null)
+        assertEquals(ClipboardPayload.Text("texto simples"), readClipboardPayload(clipboard))
+
+        val htmlFlavor = DataFlavor("text/html;class=java.lang.String")
+        clipboard.setContents(
+            object : Transferable {
+                override fun getTransferDataFlavors(): Array<DataFlavor> = arrayOf(htmlFlavor, DataFlavor.stringFlavor)
+                override fun isDataFlavorSupported(flavor: DataFlavor): Boolean =
+                    flavor == htmlFlavor || flavor == DataFlavor.stringFlavor
+                override fun getTransferData(flavor: DataFlavor): Any = when (flavor) {
+                    htmlFlavor -> "<p><b>Olá</b></p>"
+                    DataFlavor.stringFlavor -> "Olá"
+                    else -> throw UnsupportedFlavorException(flavor)
+                }
+            },
+            null,
+        )
+        assertEquals(ClipboardPayload.Html("<p><b>Olá</b></p>"), readClipboardPayload(clipboard))
+
+        val img = BufferedImage(4, 4, BufferedImage.TYPE_INT_ARGB)
+        clipboard.setContents(
+            object : Transferable {
+                override fun getTransferDataFlavors(): Array<DataFlavor> =
+                    arrayOf(DataFlavor.imageFlavor, htmlFlavor, DataFlavor.stringFlavor)
+                override fun isDataFlavorSupported(flavor: DataFlavor): Boolean =
+                    flavor == DataFlavor.imageFlavor || flavor == htmlFlavor || flavor == DataFlavor.stringFlavor
+                override fun getTransferData(flavor: DataFlavor): Any = when (flavor) {
+                    DataFlavor.imageFlavor -> img
+                    htmlFlavor -> "<p>ignored</p>"
+                    DataFlavor.stringFlavor -> "ignored"
+                    else -> throw UnsupportedFlavorException(flavor)
+                }
+            },
+            null,
+        )
+        assertTrue(readClipboardPayload(clipboard) is ClipboardPayload.Image)
     }
 }

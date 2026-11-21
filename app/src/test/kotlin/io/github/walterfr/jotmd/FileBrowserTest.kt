@@ -31,4 +31,22 @@ class FileBrowserTest {
         assertEquals(null, resolveWikilink("notas", nodes)) // pasta não é nota
         assertEquals(null, resolveWikilink("inexistente", nodes))
     }
+
+    @Test fun sanitizeFileNameRemoveInvalidosEGaranteExtensaoMarkdown() {
+        assertEquals("Minha Nota.md", sanitizeFileName("  Minha Nota  ", ensureMarkdownExtension = true))
+        assertEquals("nota.md", sanitizeFileName("nota.md", ensureMarkdownExtension = true))
+        assertEquals("README.MARKDOWN", sanitizeFileName("README.MARKDOWN", ensureMarkdownExtension = true))
+        assertEquals("rascunho.txt.md", sanitizeFileName("rascunho.txt", ensureMarkdownExtension = true))
+        assertEquals("abcdefghij.md", sanitizeFileName("  a/b\\c:d*e?f\"g<h>i|j  ", ensureMarkdownExtension = true))
+        assertEquals("Sem Título.md", sanitizeFileName("   ", ensureMarkdownExtension = true))
+        assertEquals("Sem Título.md", sanitizeFileName("///:*?\"<>|\\", ensureMarkdownExtension = true))
+        assertEquals("Sem Título.md", sanitizeFileName("..", ensureMarkdownExtension = true))
+    }
+
+    @Test fun sanitizeFileNameParaPastaNaoAdicionaExtensao() {
+        assertEquals("Projetos", sanitizeFileName("  Projetos  ", ensureMarkdownExtension = false))
+        assertEquals("subpasta", sanitizeFileName("sub/pasta\\:*?", ensureMarkdownExtension = false))
+        assertEquals("Sem Título", sanitizeFileName("", ensureMarkdownExtension = false))
+        assertEquals("Sem Título", sanitizeFileName(".", ensureMarkdownExtension = false))
+    }
 }

@@ -11,6 +11,7 @@ import io.github.walterfr.jotmd.core.BlockIdSource
 import io.github.walterfr.jotmd.core.BlockType
 import io.github.walterfr.jotmd.core.DocMatch
 import io.github.walterfr.jotmd.core.DocState
+import io.github.walterfr.jotmd.core.htmlToMarkdown
 import io.github.walterfr.jotmd.core.parse
 import io.github.walterfr.jotmd.core.replaceAllInText
 import io.github.walterfr.jotmd.core.replaceRangeInText
@@ -27,7 +28,9 @@ import io.github.walterfr.jotmd.editor.ops.applySmartPair
 import io.github.walterfr.jotmd.editor.ops.cycleTableColumnAlignment
 import io.github.walterfr.jotmd.editor.ops.isFrontMatterTrigger
 import io.github.walterfr.jotmd.editor.ops.mergeWithPrevious
+import io.github.walterfr.jotmd.editor.ops.moveTableColumn
 import io.github.walterfr.jotmd.editor.ops.moveTableRow
+import io.github.walterfr.jotmd.editor.ops.newTableMarkdown
 import io.github.walterfr.jotmd.editor.ops.removeTableColumn
 import io.github.walterfr.jotmd.editor.ops.removeTableRow
 import io.github.walterfr.jotmd.editor.ops.reparse
@@ -72,6 +75,17 @@ class EditorState(initialText: String = "") {
     var scrollRequestBlockIndex: Int? = null
         private set
 
+    var searchHighlightQuery: String by mutableStateOf("")
+        private set
+    var searchHighlightCaseSensitive: Boolean by mutableStateOf(false)
+        private set
+    var searchHighlightWholeWord: Boolean by mutableStateOf(false)
+        private set
+    var searchHighlightRegex: Boolean by mutableStateOf(false)
+        private set
+    var activeSearchMatch: DocMatch? by mutableStateOf(null)
+        private set
+
     var doc: DocState by mutableStateOf(parse(initialText, ids))
         private set
     var focusedId: BlockId? by mutableStateOf(null)
@@ -91,6 +105,28 @@ class EditorState(initialText: String = "") {
         isTypewriterMode = !isTypewriterMode
     }
 
+    fun setSearchHighlight(
+        query: String,
+        caseSensitive: Boolean = false,
+        wholeWord: Boolean = false,
+        regex: Boolean = false,
+        activeMatch: DocMatch? = null,
+    ) {
+        searchHighlightQuery = query
+        searchHighlightCaseSensitive = caseSensitive
+        searchHighlightWholeWord = wholeWord
+        searchHighlightRegex = regex
+        activeSearchMatch = activeMatch
+    }
+
+    fun clearSearchHighlight() {
+        searchHighlightQuery = ""
+        searchHighlightCaseSensitive = false
+        searchHighlightWholeWord = false
+        searchHighlightRegex = false
+        activeSearchMatch = null
+    }
+
     /** Documento inteiro como texto, byte a byte — o que vai pro arquivo ao gravar. */
     fun text(): String = serialize(doc)
 
@@ -100,6 +136,7 @@ class EditorState(initialText: String = "") {
         focusedId = null
         editValue = TextFieldValue("")
         scrollRequestBlockIndex = null
+        clearSearchHighlight()
         undo.clear()
         clearStaleEcho()
     }
@@ -504,8 +541,9 @@ class EditorState(initialText: String = "") {
         replacement: String,
         caseSensitive: Boolean = false,
         wholeWord: Boolean = false,
+        regex: Boolean = false,
     ): Int {
-        val (updated, count) = replaceAllInText(text(), query, replacement, caseSensitive, wholeWord)
+        val (updated, count) = replaceAllInText(text(), query, replacement, caseSensitive, wholeWord, regex)
         if (count == 0) return 0
 
         val prevIndex = focusedId?.let { fid -> doc.blocks.indexOfFirst { it.id == fid } } ?: -1
@@ -532,6 +570,164 @@ class EditorState(initialText: String = "") {
         doc = doc.copy(blocks = doc.blocks.map { if (it.id == blockId) it.copy(source = toggled) else it })
     }
 
+    /** Insere tabela GFM vazia no bloco focado (ou ao fim do documento) e a mantém focada. */
+    fun insertTable(cols: Int = 3, dataRows: Int = 3): Boolean {
+        val tableMd = newTableMarkdown(cols, dataRows)
+        recordUndoCheckpoint(force = true)
+        val fid = focusedId
+        val index = if (fid != null) doc.blocks.indexOfFirst { it.id == fid } else -1
+        if (index < 0) {
+            val newTable = Block(ids.next(), BlockType.TABLE, tableMd, "\n")
+            if (doc.blocks.isEmpty()) {
+                doc = DocState(leading = doc.leading, blocks = listOf(newTable))
+            } else {
+                val last = doc.blocks.last()
+                val sep = if (last.trailing.contains("\n\n") || last.trailing.contains("\r\n\r\n")) {
+                    last.trailing
+                } else {
+                    "\n\n"
+                }
+                doc = doc.copy(blocks = doc.blocks.dropLast(1) + last.copy(trailing = sep) + newTable)
+            }
+            focusTableBlock(newTable)
+            return true
+        }
+
+        val block = doc.blocks[index]
+        val currentText = editValue.text
+        if (currentText.isBlank()) {
+            val tableBlock = block.copy(type = BlockType.TABLE, source = tableMd)
+            doc = doc.copy(blocks = doc.blocks.mapIndexed { i, b -> if (i == index) tableBlock else b })
+            focusTableBlock(tableBlock)
+            return true
+        }
+
+        if (block.type == BlockType.FRONT_MATTER || block.type == BlockType.CODE_FENCE) {
+            val tableBlock = Block(ids.next(), BlockType.TABLE, tableMd, block.trailing)
+            val updatedBlock = block.copy(trailing = "\n\n")
+            doc = doc.copy(
+                blocks = doc.blocks.subList(0, index) +
+                    listOf(updatedBlock, tableBlock) +
+                    doc.blocks.subList(index + 1, doc.blocks.size),
+            )
+            focusTableBlock(tableBlock)
+            return true
+        }
+
+        val selStart = minOf(editValue.selection.start, editValue.selection.end).coerceIn(0, currentText.length)
+        val selEnd = maxOf(editValue.selection.start, editValue.selection.end).coerceIn(selStart, currentText.length)
+        val before = currentText.substring(0, selStart)
+        val after = currentText.substring(selEnd)
+        val tableId = if (before.isEmpty() && after.isEmpty()) block.id else ids.next()
+        val tableBlock = Block(
+            id = tableId,
+            type = BlockType.TABLE,
+            source = tableMd,
+            trailing = if (after.isEmpty()) block.trailing else "\n\n",
+        )
+        val replacement = buildList {
+            if (before.isNotEmpty()) {
+                val beforeType = parse(before, frontMatter = false).blocks.firstOrNull()?.type ?: block.type
+                add(block.copy(type = beforeType, source = before, trailing = "\n\n"))
+            }
+            add(tableBlock)
+            if (after.isNotEmpty()) {
+                val afterType = parse(after, frontMatter = false).blocks.firstOrNull()?.type ?: BlockType.PARAGRAPH
+                add(Block(ids.next(), afterType, after, block.trailing))
+            }
+        }
+        doc = doc.copy(
+            blocks = doc.blocks.subList(0, index) + replacement + doc.blocks.subList(index + 1, doc.blocks.size),
+        )
+        focusTableBlock(tableBlock)
+        return true
+    }
+
+    /**
+     * Cola [markdown] no cursor/seleção do bloco focado (reparseando se formar
+     * blocos compostos) ou anexa ao documento quando nada estiver focado.
+     */
+    fun pasteMarkdownAtCursor(markdown: String): Boolean {
+        if (markdown.isEmpty()) return false
+        val normalized = markdown.replace("\r\n", "\n")
+        val fid = focusedId
+        val index = if (fid != null) doc.blocks.indexOfFirst { it.id == fid } else -1
+
+        recordUndoCheckpoint(force = true)
+        if (index < 0) {
+            val parsed = parse(normalized, ids, frontMatter = false)
+            val inserted = parsed.blocks.ifEmpty {
+                listOf(Block(ids.next(), BlockType.PARAGRAPH, normalized, ""))
+            }
+            if (doc.blocks.isEmpty()) {
+                doc = DocState(leading = doc.leading + parsed.leading, blocks = inserted)
+            } else {
+                val last = doc.blocks.last()
+                val sep = if (last.trailing.contains("\n\n") || last.trailing.contains("\r\n\r\n")) {
+                    last.trailing
+                } else {
+                    "\n\n"
+                }
+                doc = doc.copy(blocks = doc.blocks.dropLast(1) + last.copy(trailing = sep) + inserted)
+            }
+            val lastInserted = inserted.last()
+            focusedId = lastInserted.id
+            editValue = TextFieldValue(lastInserted.source, TextRange(lastInserted.source.length))
+            clearStaleEcho()
+            return true
+        }
+
+        val block = doc.blocks[index]
+        val currentText = editValue.text
+        val selStart = minOf(editValue.selection.start, editValue.selection.end).coerceIn(0, currentText.length)
+        val selEnd = maxOf(editValue.selection.start, editValue.selection.end).coerceIn(selStart, currentText.length)
+        val updated = currentText.substring(0, selStart) + normalized + currentText.substring(selEnd)
+        val cursorAfter = selStart + normalized.length
+
+        val keepSingleRawBlock = block.type == BlockType.FRONT_MATTER || block.type == BlockType.CODE_FENCE
+        val parsedUpdated = if (keepSingleRawBlock || updated.isBlank()) null else parse(updated, frontMatter = false).blocks
+        val needsReparse = !keepSingleRawBlock && updated.isNotBlank() && (
+            normalized.contains("\n\n") ||
+                hasFenceOpener(normalized) ||
+                (parsedUpdated?.size ?: 0) != 1 ||
+                parsedUpdated?.firstOrNull()?.type != block.type
+            )
+
+        if (!needsReparse) {
+            editValue = TextFieldValue(updated, TextRange(cursorAfter.coerceIn(0, updated.length)))
+            clearStaleEcho()
+            syncDocFromEdit()
+            return true
+        }
+
+        val spliced = doc.blocks.mapIndexed { i, b ->
+            if (i == index) b.copy(source = updated) else b
+        }
+        val reparsed = reparse(spliced, index, ids)
+        if (reparsed.isEmpty()) {
+            val fallback = block.copy(type = BlockType.PARAGRAPH, source = updated)
+            doc = doc.copy(blocks = listOf(fallback))
+            focusedId = fallback.id
+            editValue = TextFieldValue(updated, TextRange(cursorAfter.coerceIn(0, updated.length)))
+            clearStaleEcho()
+            return true
+        }
+        doc = doc.copy(blocks = reparsed)
+        focusAtOffset(reparsed, index, cursorAfter)
+        clearStaleEcho()
+        return true
+    }
+
+    /** Converte [html] em Markdown e cola no cursor atual. */
+    fun pasteHtmlAtCursor(html: String): Boolean =
+        pasteMarkdownAtCursor(htmlToMarkdown(html))
+
+    /** Insere imagem Markdown `![alt](destination)` no cursor atual. */
+    fun insertImageMarkdown(alt: String, destination: String): Boolean {
+        if (destination.isBlank()) return false
+        return pasteMarkdownAtCursor("![$alt]($destination)")
+    }
+
     fun tableAddRow(blockId: BlockId, afterRowIndex: Int? = null): Boolean =
         applyTableEdit(blockId) { addTableRow(it, afterRowIndex) }
 
@@ -556,8 +752,18 @@ class EditorState(initialText: String = "") {
         moveTableRow(source, rowIndex, delta)
     }
 
+    fun tableMoveColumn(blockId: BlockId, colIndex: Int, delta: Int): Boolean =
+        applyTableEdit(blockId) { moveTableColumn(it, colIndex, delta) }
+
     fun tableCycleAlignment(blockId: BlockId, colIndex: Int = 0): Boolean =
         applyTableEdit(blockId) { cycleTableColumnAlignment(it, colIndex) }
+
+    private fun focusTableBlock(tableBlock: Block) {
+        focusedId = tableBlock.id
+        val firstCellCursor = if (tableBlock.source.startsWith("| ")) 2 else 0
+        editValue = TextFieldValue(tableBlock.source, TextRange(firstCellCursor.coerceIn(0, tableBlock.source.length)))
+        clearStaleEcho()
+    }
 
     private fun applyTableEdit(blockId: BlockId, transform: (String) -> String?): Boolean {
         val index = doc.blocks.indexOfFirst { it.id == blockId }

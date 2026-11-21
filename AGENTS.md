@@ -63,10 +63,10 @@ minSdk 26, Compose BOM 2025.06.01, `org.jetbrains:markdown` 0.7.3. Versões em
 
 | Módulo | Conteúdo |
 |---|---|
-| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocOutline` (`outlineOf`, `isTocMarker`), `DocStats` (`docStatsOf`, `TYPORA_WPM`), `DocSearch` (`findInDocument`, `replaceAllInText`, `replaceRangeInText`), `HtmlExport` (`exportToHtml`), `PdfExport` (`exportToPdf`). |
-| `:editor` | Compose. `EditorState` (estado, modo foco/máquina e tabela), `BlockEditor` (foco, gutter de código-fonte + teclas), `BlockRenderer`/`BlockParts`/`InlineText` (renderização, GitHub Alerts, `==highlight==`, `<u>`, widget `[TOC]` e controles de tabela), `Toolbar`, `ImagePreview`, `MdTheme` (5 presets: `github`, `newsprint`, `pixyll`, `whitey`, `night` via `MdTokens.themePreset` / `MdTokens.isDark`), modo código-fonte (`isSourceMode`), coluna centralizada (`860.dp`/`800.dp`). Operações puras em `editor/ops/`: `BlockOps` (`splitAt`, `mergeWithPrevious`, `reparse`), `UndoStack`, `TaskOps`, `TableOps`, `SourceGutter`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`. |
-| `:app` | Shell Android. `MainActivity` (gaveta com abas `Arquivos`/`Índices` e Contagem de Palavras, multi-abas, 5 temas, `</>`/`Foco`, busca na pasta e na nota com `Aa`/`[ab]`/substituição unitária, export HTML/PDF via SAF, links), `TabManager`, `FileSession` (abrir/gravar SAF, autosave), `FileBrowser` (árvore da pasta raiz, `resolveWikilink`), `SearchIndex` (FTS4). |
-| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, árvore `.md` com `DirectoryTreeWatcher`, Quick Open `Ctrl+P`, aba `Índices`, rodapé `30.dp` com Contagem de Palavras/`</>`/`Foco`/`Máquina`, busca full-text na pasta e na nota com `Aa`/`[ab]`/`Substituir`, 5 temas, export HTML/PDF, wikilinks/tags, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
+| `:core-md` | Kotlin puro, zero Android. `Block`/`DocState`, `MdParser` (`parse`), `MdSerializer` (`serialize`), `FrontMatter`, `Wikilinks`, `Tags` (`tagSpansIn`), `DocIndex`, `Scan`, `Alerts` (`alertOf`), `DocOutline` (`outlineOf`, `isTocMarker`), `DocStats` (`docStatsOf`, `TYPORA_WPM`), `DocRefs` (`docRefsOf`, links por referência e notas de rodapé `[^id]`), `MathRender` (`extractMathBlock`, `inlineMathSpansIn`, `renderLatexToUnicode`), `HtmlToMarkdown` (`htmlToMarkdown`), `DocSearch` (`findInDocument`, `replaceAllInText`, `replaceRangeInText`, `isValidSearchRegex`), `HtmlExport` (`exportToHtml`), `PdfExport` (`exportToPdf` com `[TOC]`, LaTeX ASCII fallback, referências e notas de rodapé). |
+| `:editor` | Compose. `EditorState` (estado, modo foco/máquina, busca visual/regex, paste HTML/Markdown e tabela), `BlockEditor` (foco, gutter + `VisualTransformation` sintática no código-fonte e teclas/atalho `Ctrl+T`), `BlockRenderer`/`BlockParts`/`InlineText` (renderização, GitHub Alerts, `==highlight==`, `<u>`, widget `[TOC]`, LaTeX, notas de rodapé, links por referência, realce de código, destaques de busca e controles de tabela), `Toolbar` (`⊞`), `ImagePreview`, `MdTheme` (5 presets via `MdTokens.themePreset`/`isDark`, tokens de busca/sintaxe), coluna centralizada (`860.dp`/`800.dp`). Operações puras em `editor/ops/`: `BlockOps`, `UndoStack`, `TaskOps`, `TableOps`, `SourceGutter`, `SyntaxHighlight`, `SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`. |
+| `:app` | Shell Android. `MainActivity` (gaveta com abas `Arquivos` — CRUD SAF `+ Nota`/`+ Pasta`/renomear/excluir — e `Índices` + Contagem de Palavras, multi-abas, 5 temas, `</>`/`Foco`/`Tabela`/`Colar+`, busca na pasta e na nota com `Aa`/`[ab]`/`.*`/destaque/substituição unitária, export HTML/PDF via SAF, links/notas de rodapé), `TabManager`, `FileSession` (SAF + autosave), `FileBrowser` (árvore e CRUD via `DocumentsContract`), `SearchIndex` (FTS4). |
+| `:desktop` | Shell Windows (Compose Desktop JVM). `Main` / `DesktopWorkspace` (abas, CRUD seguro na árvore `.md` com `DirectoryTreeWatcher`, Quick Open `Ctrl+P`, aba `Índices`, rodapé `30.dp` com Contagem de Palavras/`</>`/`Foco`/`Máquina`, `Tabela`/`Ctrl+T`, `Colar+`/`Ctrl+Shift+V` com PNG em `typora-user-images/`, busca na pasta e na nota com `Aa`/`[ab]`/`.*`/destaque/`Substituir`, 5 temas, export HTML/PDF, wikilinks/tags/notas de rodapé, gravação em disco) + `ImagePreview.desktop` compartilhando `:core-md` e `editor/src/main/kotlin`. |
 
 ## Estado (2026-11-20)
 
@@ -104,7 +104,15 @@ Implementado em código e testado em JVM neste ciclo:
   `GitHub`/`Newsprint`/`Pixyll`/`Whitey`/`Night`, Focus/Typewriter Mode, coluna
   `860dp`/`800dp`, `SourceGutter`, `TableOps`, padronização `"Sem Título"`,
   `Aa`/`[ab]`/substituição unitária, gaveta/sidebar `"Índices"` + Contagem de
-  Palavras, rodapé `30dp`, `DirectoryTreeWatcher` e Quick Open `Ctrl+P` no Desktop).
+  Palavras, rodapé `30dp`, `DirectoryTreeWatcher` e Quick Open `Ctrl+P` no Desktop),
+  tag `v0.2.0` + workflow `.github/workflows/release.yml` e 2º bloco de paridade
+  (`DocSearch` regex `.*` + destaques visuais no editor, `SyntaxHighlight` em
+  cercas e código-fonte com `VisualTransformation`, `DocRefs` para links por
+  referência e notas de rodapé `[^id]`, `MathRender` `$...$`/`$$...$$`,
+  `HtmlToMarkdown` + colagem rica/`Colar+`/imagem PNG em `typora-user-images/`,
+  inserção de tabela `3x4`/`Ctrl+T`/`Tabela`/`⊞` + movimentação de colunas,
+  TOC/math/referências/notas no `PdfExport` e CRUD de notas/pastas no `:app` SAF
+  e `:desktop`).
 
 Verificado em tablet Android (`TB361FU - 16`, Android 16 via `adb`):
 
@@ -190,11 +198,12 @@ Pendente:
   independentes devem ser sempre paralelizadas usando múltiplos subagentes
   (`invoke_subagent`) com conjuntos disjuntos de arquivos, consolidando o
   build/testes na thread principal.
-- **Releases automáticas (GitHub Actions):** tags `v*` disparam
-  `.github/workflows/release.yml` (`.apk` Android, `.msi`/`.exe`/`.zip` portátil
-  Windows e `SHA256SUMS.txt`). `app/build.gradle.kts` só ativa `signingConfig`
-  quando `KEYSTORE_PATH`/`USE_DEBUG_SIGNING` existem no ambiente, mantendo o
-  build do F-Droid intacto.
+- **Releases automáticas (GitHub Actions) & Pride Versioning:** versionamento
+  segue o [**Pride Versioning**](https://pridever.org/) (`PROUD.DEFAULT.SHAME`).
+  Tags `v*` disparam `.github/workflows/release.yml` (`.apk` Android,
+  `.msi`/`.exe`/`.zip` portátil Windows e `SHA256SUMS.txt`). `app/build.gradle.kts`
+  só ativa `signingConfig` quando `KEYSTORE_PATH`/`USE_DEBUG_SIGNING` existem no
+  ambiente, mantendo o build do F-Droid intacto.
 
 ## Teste em aparelho (tablet Android via adb wireless)
 

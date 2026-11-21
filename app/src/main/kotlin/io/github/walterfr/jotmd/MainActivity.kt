@@ -1,5 +1,6 @@
 package io.github.walterfr.jotmd
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -43,6 +44,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -69,11 +71,14 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import io.github.walterfr.jotmd.core.docRefsOf
 import io.github.walterfr.jotmd.core.docStatsOf
 import io.github.walterfr.jotmd.core.exportToHtml
 import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
+import io.github.walterfr.jotmd.core.isValidSearchRegex
 import io.github.walterfr.jotmd.core.outlineOf
+import io.github.walterfr.jotmd.editor.FOOTNOTE_URI
 import io.github.walterfr.jotmd.editor.MdThemePreset
 import io.github.walterfr.jotmd.editor.MdTokens
 import io.github.walterfr.jotmd.editor.TAG_URI
@@ -111,6 +116,37 @@ private const val PREF_DARK = "dark_theme"
 private const val PREF_THEME = "theme_preset"
 
 private enum class DrawerTab { FILES, OUTLINE }
+
+private sealed interface FileDialogState {
+    data class CreateNote(val parentDocId: String, val parentLabel: String?) : FileDialogState
+    data class CreateFolder(val parentDocId: String) : FileDialogState
+    data class Rename(val node: DocNode) : FileDialogState
+    data class Delete(val node: DocNode) : FileDialogState
+}
+
+private fun tabKey(tab: EditorTab): String? = tab.session?.uri?.toString() ?: tab.key
+
+private fun descendantFilesWithRelativePath(nodes: List<DocNode>, dir: DocNode): List<Pair<DocNode, String>> {
+    val startIndex = nodes.indexOfFirst { it.docId == dir.docId }
+    if (startIndex < 0) return emptyList()
+    val out = ArrayList<Pair<DocNode, String>>()
+    val dirStack = ArrayList<Pair<Int, String>>()
+    for (i in (startIndex + 1) until nodes.size) {
+        val child = nodes[i]
+        if (child.depth <= dir.depth) break
+        while (dirStack.isNotEmpty() && dirStack.last().first >= child.depth) {
+            dirStack.removeAt(dirStack.lastIndex)
+        }
+        if (child.isDir) {
+            dirStack.add(child.depth to child.name)
+        } else {
+            val prefix = dirStack.joinToString("/") { it.second }
+            val rel = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            out += child to rel
+        }
+    }
+    return out
+}
 
 /** Seletor de pasta com leitura+escrita persistentes (mesmo motivo do OpenMarkdown). */
 private class PickRoot : ActivityResultContracts.OpenDocumentTree() {
@@ -219,6 +255,14 @@ private fun EditorHostScreen(
         return !failed
     }
 
+    suspend fun flushTabAsync(tab: EditorTab): Boolean {
+        val s = tab.session ?: return true
+        val text = tab.editorState.text()
+        val failed = runCatching { withContext(Dispatchers.IO) { s.saveIfChanged(text) } }.isFailure
+        tabManager.updateSaveState(tab.id, failed)
+        return !failed
+    }
+
     // Reinicia a cada mudança em doc ou troca de aba: só chega ao save quem ficou 1s sem editar.
     LaunchedEffect(activeTab.id, activeTab.editorState.doc, activeTab.session) {
         val s = activeTab.session ?: return@LaunchedEffect
@@ -263,14 +307,29 @@ private fun EditorHostScreen(
     var replaceQuery by remember { mutableStateOf("") }
     var caseSensitive by remember { mutableStateOf(false) }
     var wholeWord by remember { mutableStateOf(false) }
+    var findRegex by remember { mutableStateOf(false) }
     var matchCursor by remember { mutableStateOf(0) }
-    val docMatches = remember(activeTab.id, activeTab.editorState.doc, findQuery, caseSensitive, wholeWord) {
-        findInDocument(
-            activeTab.editorState.doc,
-            findQuery,
-            caseSensitive = caseSensitive,
-            wholeWord = wholeWord,
-        )
+    val regexValid = remember(findQuery, findRegex) { !findRegex || isValidSearchRegex(findQuery) }
+    val docMatches = remember(
+        activeTab.id,
+        activeTab.editorState.doc,
+        findQuery,
+        caseSensitive,
+        wholeWord,
+        findRegex,
+        regexValid,
+    ) {
+        if (!regexValid) {
+            emptyList()
+        } else {
+            findInDocument(
+                activeTab.editorState.doc,
+                findQuery,
+                caseSensitive = caseSensitive,
+                wholeWord = wholeWord,
+                regex = findRegex,
+            )
+        }
     }
 
     LaunchedEffect(docMatches) {
@@ -279,6 +338,35 @@ private fun EditorHostScreen(
         } else if (matchCursor >= docMatches.size) {
             matchCursor = 0
         }
+    }
+
+    LaunchedEffect(
+        showFindBar,
+        activeTab.id,
+        findQuery,
+        caseSensitive,
+        wholeWord,
+        findRegex,
+        regexValid,
+        matchCursor,
+        docMatches,
+    ) {
+        if (showFindBar && findQuery.isNotEmpty() && regexValid) {
+            activeTab.editorState.setSearchHighlight(
+                findQuery,
+                caseSensitive,
+                wholeWord,
+                findRegex,
+                docMatches.getOrNull(matchCursor),
+            )
+        } else {
+            activeTab.editorState.clearSearchHighlight()
+        }
+    }
+
+    DisposableEffect(activeTab.id) {
+        val state = activeTab.editorState
+        onDispose { state.clearSearchHighlight() }
     }
 
     fun jumpToMatch(targetIndex: Int) {
@@ -324,7 +412,7 @@ private fun EditorHostScreen(
     // pendente da aba atual: o debounce de 1s seria cancelado pela troca.
     fun openUri(uri: Uri) {
         val key = uri.toString()
-        val existing = tabManager.tabs.firstOrNull { it.key == key }
+        val existing = tabManager.tabs.firstOrNull { tabKey(it) == key }
         if (existing != null) {
             val current = tabManager.activeTab
             if (existing.id != current.id) {
@@ -350,6 +438,54 @@ private fun EditorHostScreen(
         }
     }
 
+    fun smartPaste() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = clipboard?.primaryClip
+        if (clip == null || clip.itemCount == 0) {
+            notice = "Área de transferência vazia"
+            return
+        }
+        val items = (0 until clip.itemCount).map { clip.getItemAt(it) }
+        val html = items.firstNotNullOfOrNull { it.htmlText?.takeIf(String::isNotEmpty) }
+        val imageUri = items.mapNotNull { it.uri }.firstOrNull { uri ->
+            val uriMime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+            if (uriMime != null) {
+                uriMime.startsWith("image/", ignoreCase = true)
+            } else {
+                clip.description?.hasMimeType("image/*") == true
+            }
+        }
+        val tab = tabManager.activeTab
+        val pasted = when {
+            html != null -> {
+                if (tab.editorState.pasteHtmlAtCursor(html)) {
+                    true
+                } else {
+                    val fallbackText = items
+                        .mapNotNull { it.coerceToText(context)?.toString()?.takeIf(String::isNotEmpty) }
+                        .joinToString("\n")
+                    fallbackText.isNotEmpty() && tab.editorState.pasteMarkdownAtCursor(fallbackText)
+                }
+            }
+            imageUri != null -> tab.editorState.insertImageMarkdown("imagem", imageUri.toString())
+            else -> {
+                val text = items
+                    .mapNotNull { it.coerceToText(context)?.toString()?.takeIf(String::isNotEmpty) }
+                    .joinToString("\n")
+                if (text.isEmpty()) {
+                    notice = "Área de transferência vazia"
+                    return
+                }
+                tab.editorState.pasteMarkdownAtCursor(text)
+            }
+        }
+        if (pasted) {
+            notice = null
+        } else if (tab.editorState.focusedId == null) {
+            notice = "Toque em um bloco para colar"
+        }
+    }
+
     val open = rememberLauncherForActivityResult(OpenMarkdown()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         runCatching {
@@ -365,6 +501,7 @@ private fun EditorHostScreen(
     var nodes by remember { mutableStateOf(emptyList<DocNode>()) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var drawerTab by remember { mutableStateOf(DrawerTab.FILES) }
+    var fileDialog by remember { mutableStateOf<FileDialogState?>(null) }
 
     val pickRoot = rememberLauncherForActivityResult(PickRoot()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -375,6 +512,7 @@ private fun EditorHostScreen(
             )
         }
         prefs.edit().putString(PREF_ROOT, uri.toString()).apply()
+        nodes = emptyList()
         root = uri
     }
 
@@ -385,18 +523,22 @@ private fun EditorHostScreen(
     var query by remember { mutableStateOf("") }
     var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
 
+    suspend fun refreshTree(r: Uri) {
+        val listed = runCatching {
+            withContext(Dispatchers.IO) { listMarkdownTree(context.contentResolver, r, includeEmptyDirs = true) }
+        }.getOrDefault(emptyList())
+        nodes = listed
+        runCatching { withContext(Dispatchers.IO) { index.reindex(context.contentResolver, r, listed) } }
+        indexVersion++
+    }
+
     // Relista ao trocar a raiz e a cada abertura do painel (arquivos mudam fora
     // do app) e sincroniza o índice — que só relê arquivo com data alterada,
     // então isso também pega o que o próprio autosave gravou.
     LaunchedEffect(root, drawerState.isOpen) {
         val r = root ?: return@LaunchedEffect
         if (!drawerState.isOpen && nodes.isNotEmpty()) return@LaunchedEffect
-        val listed = runCatching {
-            withContext(Dispatchers.IO) { listMarkdownTree(context.contentResolver, r) }
-        }.getOrDefault(emptyList())
-        nodes = listed
-        runCatching { withContext(Dispatchers.IO) { index.reindex(context.contentResolver, r, listed) } }
-        indexVersion++
+        refreshTree(r)
     }
 
     LaunchedEffect(query, indexVersion) {
@@ -404,8 +546,8 @@ private fun EditorHostScreen(
         hits = runCatching { withContext(Dispatchers.IO) { index.search(query) } }.getOrDefault(emptyList())
     }
 
-    // Links do texto renderizado. `[[nota]]` e `#tag` chegam como URIs internas
-    // (WIKI_URI/TAG_URI); interceptar no LocalUriHandler evita passar callback
+    // Links do texto renderizado. `[[nota]]`, `#tag` e `[^nota]` chegam como URIs internas
+    // (WIKI_URI/TAG_URI/FOOTNOTE_URI); interceptar no LocalUriHandler evita passar callback
     // por BlockRenderer/ListBlock/etc. Qualquer outro link vai pro handler padrão.
     val defaultUriHandler = LocalUriHandler.current
     val onLink: (String) -> Unit = { uri ->
@@ -424,6 +566,20 @@ private fun EditorHostScreen(
                 query = "#" + uri.removePrefix(TAG_URI)
                 drawerTab = DrawerTab.FILES
                 scope.launch { drawerState.open() }
+            }
+            uri.startsWith(FOOTNOTE_URI) -> {
+                val id = uri.removePrefix(FOOTNOTE_URI)
+                val tab = tabManager.activeTab
+                val def = docRefsOf(tab.editorState.doc).resolveFootnote(id)
+                if (def == null) {
+                    notice = "Nota de rodapé não encontrada"
+                } else {
+                    tab.editorState.focusBlockIndex(def.blockIndex)
+                    if (def.blockIndex in tab.editorState.doc.blocks.indices) {
+                        scope.launch { listStates[tab.id]?.animateScrollToItem(def.blockIndex) }
+                    }
+                    notice = null
+                }
             }
             else -> runCatching { defaultUriHandler.openUri(uri) }
         }
@@ -460,6 +616,28 @@ private fun EditorHostScreen(
                         Text(if (root == null) "Escolher pasta" else "Trocar pasta")
                     }
                     if (root != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    val r = root ?: return@TextButton
+                                    val rootDocId = DocumentsContract.getTreeDocumentId(r)
+                                    fileDialog = FileDialogState.CreateNote(rootDocId, parentLabel = null)
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) { Text("+ Nota") }
+                            TextButton(
+                                onClick = {
+                                    val r = root ?: return@TextButton
+                                    val rootDocId = DocumentsContract.getTreeDocumentId(r)
+                                    fileDialog = FileDialogState.CreateFolder(rootDocId)
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) { Text("+ Pasta") }
+                        }
                         OutlinedTextField(
                             value = query,
                             onValueChange = { query = it },
@@ -511,9 +689,7 @@ private fun EditorHostScreen(
                     } else {
                         LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
                             items(nodes, key = { it.docId }) { node ->
-                                Text(
-                                    text = if (node.isDir) node.name + "/" else node.name,
-                                    style = MaterialTheme.typography.bodyLarge,
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable(enabled = !node.isDir) {
@@ -525,11 +701,34 @@ private fun EditorHostScreen(
                                         }
                                         .padding(
                                             start = (16 + 16 * node.depth).dp,
-                                            top = 10.dp,
-                                            end = 16.dp,
-                                            bottom = 10.dp,
+                                            top = 4.dp,
+                                            end = 8.dp,
+                                            bottom = 4.dp,
                                         ),
-                                )
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = if (node.isDir) node.name + "/" else node.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+                                    )
+                                    if (node.isDir) {
+                                        DrawerNodeActionButton(label = "+") {
+                                            fileDialog = FileDialogState.CreateNote(
+                                                parentDocId = node.docId,
+                                                parentLabel = node.name,
+                                            )
+                                        }
+                                    }
+                                    DrawerNodeActionButton(label = "✎") {
+                                        fileDialog = FileDialogState.Rename(node)
+                                    }
+                                    DrawerNodeActionButton(label = "×") {
+                                        fileDialog = FileDialogState.Delete(node)
+                                    }
+                                }
                             }
                         }
                     }
@@ -654,6 +853,23 @@ private fun EditorHostScreen(
                             active = activeTab.editorState.isFocusMode,
                             onClick = { activeTab.editorState.toggleFocusMode() },
                         )
+                        ModeToggleChip(
+                            label = "Colar+",
+                            active = false,
+                            onClick = { smartPaste() },
+                        )
+                        ModeToggleChip(
+                            label = "Tabela",
+                            active = false,
+                            onClick = {
+                                val tab = tabManager.activeTab
+                                if (tab.editorState.insertTable()) {
+                                    notice = null
+                                } else if (tab.editorState.focusedId == null) {
+                                    notice = "Toque em um bloco para inserir tabela"
+                                }
+                            },
+                        )
                         TextButton(
                             onClick = { showFindBar = !showFindBar },
                             contentPadding = PaddingValues(horizontal = 6.dp),
@@ -690,6 +906,8 @@ private fun EditorHostScreen(
                     replaceQuery = replaceQuery,
                     caseSensitive = caseSensitive,
                     wholeWord = wholeWord,
+                    regex = findRegex,
+                    regexValid = regexValid,
                     matchIndex = matchCursor,
                     matchCount = docMatches.size,
                     onFindChange = {
@@ -705,6 +923,10 @@ private fun EditorHostScreen(
                         wholeWord = !wholeWord
                         matchCursor = 0
                     },
+                    onToggleRegex = {
+                        findRegex = !findRegex
+                        matchCursor = 0
+                    },
                     onPrev = { jumpToMatch(matchCursor - 1) },
                     onNext = { jumpToMatch(matchCursor + 1) },
                     onReplaceCurrent = {
@@ -714,13 +936,16 @@ private fun EditorHostScreen(
                         }
                     },
                     onReplaceAll = {
-                        val replaced = activeTab.editorState.replaceAll(
-                            query = findQuery,
-                            replacement = replaceQuery,
-                            caseSensitive = caseSensitive,
-                            wholeWord = wholeWord,
-                        )
-                        notice = "$replaced substituído(s)"
+                        if (regexValid) {
+                            val replaced = activeTab.editorState.replaceAll(
+                                query = findQuery,
+                                replacement = replaceQuery,
+                                caseSensitive = caseSensitive,
+                                wholeWord = wholeWord,
+                                regex = findRegex,
+                            )
+                            notice = "$replaced substituído(s)"
+                        }
                     },
                     onClose = { showFindBar = false },
                 )
@@ -762,6 +987,241 @@ private fun EditorHostScreen(
             }
         }
     }
+
+    fileDialog?.let { dialog ->
+        FileActionDialog(
+            dialog = dialog,
+            onDismiss = { fileDialog = null },
+            onConfirmText = { rawName ->
+                fileDialog = null
+                val r = root ?: return@FileActionDialog
+                scope.launch {
+                    when (dialog) {
+                        is FileDialogState.CreateNote -> {
+                            val created = withContext(Dispatchers.IO) {
+                                createMarkdownFile(context.contentResolver, r, dialog.parentDocId, rawName)
+                            }
+                            if (created == null) {
+                                notice = "Não foi possível criar a nota"
+                            } else {
+                                refreshTree(r)
+                                openUri(DocumentsContract.buildDocumentUriUsingTree(r, created.docId))
+                                drawerState.close()
+                            }
+                        }
+                        is FileDialogState.CreateFolder -> {
+                            val created = withContext(Dispatchers.IO) {
+                                createSubFolder(context.contentResolver, r, dialog.parentDocId, rawName)
+                            }
+                            if (created == null) {
+                                notice = "Não foi possível criar a pasta"
+                            } else {
+                                query = ""
+                                refreshTree(r)
+                            }
+                        }
+                        is FileDialogState.Rename -> {
+                            val cleanTarget = sanitizeFileName(rawName, ensureMarkdownExtension = !dialog.node.isDir)
+                            if (cleanTarget == dialog.node.name) return@launch
+                            if (dialog.node.isDir) {
+                                val oldDescendants = descendantFilesWithRelativePath(nodes, dialog.node)
+                                val oldTabByRel = oldDescendants.mapNotNull { (child, rel) ->
+                                    val oldKey = DocumentsContract.buildDocumentUriUsingTree(r, child.docId).toString()
+                                    val tab = tabManager.tabs.firstOrNull { tabKey(it) == oldKey }
+                                        ?: return@mapNotNull null
+                                    rel to tab
+                                }
+                                for ((_, tab) in oldTabByRel) {
+                                    if (!flushTabAsync(tab)) {
+                                        notice = "Erro ao salvar antes de renomear"
+                                        return@launch
+                                    }
+                                }
+                                val renamed = withContext(Dispatchers.IO) {
+                                    renameDocument(context.contentResolver, r, dialog.node.docId, rawName, isDir = true)
+                                }
+                                if (renamed == null) {
+                                    notice = "Não foi possível renomear"
+                                } else {
+                                    refreshTree(r)
+                                    val newByRel = descendantFilesWithRelativePath(nodes, renamed)
+                                        .associate { (child, rel) -> rel to child }
+                                    for ((rel, tab) in oldTabByRel) {
+                                        val newNode = newByRel[rel] ?: continue
+                                        val newUri = DocumentsContract.buildDocumentUriUsingTree(r, newNode.docId)
+                                        tabManager.replaceSession(
+                                            id = tab.id,
+                                            session = FileSession(
+                                                context.contentResolver,
+                                                newUri,
+                                                lastSaved = tab.editorState.text(),
+                                            ),
+                                            title = newNode.name,
+                                        )
+                                    }
+                                }
+                            } else {
+                                val oldKey = DocumentsContract.buildDocumentUriUsingTree(r, dialog.node.docId).toString()
+                                val matchingTab = tabManager.tabs.firstOrNull { tabKey(it) == oldKey }
+                                if (matchingTab != null && !flushTabAsync(matchingTab)) {
+                                    notice = "Erro ao salvar antes de renomear"
+                                    return@launch
+                                }
+                                val renamed = withContext(Dispatchers.IO) {
+                                    renameDocument(context.contentResolver, r, dialog.node.docId, rawName, isDir = false)
+                                }
+                                if (renamed == null) {
+                                    notice = "Não foi possível renomear"
+                                } else {
+                                    if (matchingTab != null) {
+                                        val newUri = DocumentsContract.buildDocumentUriUsingTree(r, renamed.docId)
+                                        tabManager.replaceSession(
+                                            id = matchingTab.id,
+                                            session = FileSession(
+                                                context.contentResolver,
+                                                newUri,
+                                                lastSaved = matchingTab.editorState.text(),
+                                            ),
+                                            title = renamed.name,
+                                        )
+                                    }
+                                    refreshTree(r)
+                                }
+                            }
+                        }
+                        is FileDialogState.Delete -> {
+                            val deletedKeys = if (dialog.node.isDir) {
+                                val childKeys = descendantFilesWithRelativePath(nodes, dialog.node)
+                                    .map { (child, _) ->
+                                        DocumentsContract.buildDocumentUriUsingTree(r, child.docId).toString()
+                                    }
+                                    .toSet()
+                                childKeys + DocumentsContract.buildDocumentUriUsingTree(r, dialog.node.docId).toString()
+                            } else {
+                                setOf(DocumentsContract.buildDocumentUriUsingTree(r, dialog.node.docId).toString())
+                            }
+                            val ok = withContext(Dispatchers.IO) {
+                                deleteDocument(context.contentResolver, r, dialog.node.docId)
+                            }
+                            if (!ok) {
+                                notice = "Não foi possível excluir ${dialog.node.name}"
+                            } else {
+                                val wasActiveDeleted = tabKey(tabManager.activeTab) in deletedKeys
+                                for (tab in tabManager.tabs.toList()) {
+                                    if (tabKey(tab) in deletedKeys) {
+                                        tabManager.close(tab.id) { true }
+                                        listStates.remove(tab.id)
+                                    }
+                                }
+                                if (wasActiveDeleted) notice = null
+                                refreshTree(r)
+                            }
+                        }
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun DrawerNodeActionButton(
+    label: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(6.dp),
+        color = Color.Transparent,
+    ) {
+        Box(
+            modifier = Modifier.defaultMinSize(minWidth = 30.dp, minHeight = 32.dp).padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FileActionDialog(
+    dialog: FileDialogState,
+    onDismiss: () -> Unit,
+    onConfirmText: (String) -> Unit,
+) {
+    var input by remember(dialog) {
+        mutableStateOf(if (dialog is FileDialogState.Rename) dialog.node.name else "")
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                when (dialog) {
+                    is FileDialogState.CreateNote ->
+                        if (dialog.parentLabel == null) "Nova nota" else "Nova nota em ${dialog.parentLabel}"
+                    is FileDialogState.CreateFolder -> "Nova pasta"
+                    is FileDialogState.Rename ->
+                        if (dialog.node.isDir) "Renomear pasta" else "Renomear nota"
+                    is FileDialogState.Delete -> "Excluir ${dialog.node.name}?"
+                },
+            )
+        },
+        text = {
+            when (dialog) {
+                is FileDialogState.CreateNote -> OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text("Nome") },
+                    placeholder = { Text("Sem Título.md") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                is FileDialogState.CreateFolder -> OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text("Nome") },
+                    placeholder = { Text("Sem Título") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                is FileDialogState.Rename -> OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text("Novo nome") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                is FileDialogState.Delete -> Text(
+                    if (dialog.node.isDir) {
+                        "A pasta e todo o conteúdo dela serão removidos."
+                    } else {
+                        "O arquivo será removido."
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            when (dialog) {
+                is FileDialogState.CreateNote,
+                is FileDialogState.CreateFolder,
+                -> TextButton(onClick = { onConfirmText(input) }) { Text("Criar") }
+                is FileDialogState.Rename -> TextButton(
+                    onClick = { onConfirmText(input) },
+                    enabled = input.isNotBlank(),
+                ) { Text("Renomear") }
+                is FileDialogState.Delete -> TextButton(
+                    onClick = { onConfirmText("") },
+                ) { Text("Excluir", color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        },
+    )
 }
 
 @Composable
@@ -835,12 +1295,15 @@ private fun AndroidNoteFindBar(
     replaceQuery: String,
     caseSensitive: Boolean,
     wholeWord: Boolean,
+    regex: Boolean,
+    regexValid: Boolean,
     matchIndex: Int,
     matchCount: Int,
     onFindChange: (String) -> Unit,
     onReplaceChange: (String) -> Unit,
     onToggleCaseSensitive: () -> Unit,
     onToggleWholeWord: () -> Unit,
+    onToggleRegex: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onReplaceCurrent: () -> Unit,
@@ -860,10 +1323,12 @@ private fun AndroidNoteFindBar(
                     onValueChange = onFindChange,
                     placeholder = { Text("Buscar na nota") },
                     singleLine = true,
+                    isError = !regexValid,
                     modifier = Modifier.weight(1f),
                 )
                 FindOptionChip(label = "Aa", active = caseSensitive, onClick = onToggleCaseSensitive)
                 FindOptionChip(label = "[ab]", active = wholeWord, onClick = onToggleWholeWord)
+                FindOptionChip(label = ".*", active = regex, onClick = onToggleRegex)
                 Text(
                     counter,
                     style = MaterialTheme.typography.bodySmall,
@@ -873,6 +1338,14 @@ private fun AndroidNoteFindBar(
                 CompactFindButton(label = "↑", enabled = matchCount > 0, onClick = onPrev)
                 CompactFindButton(label = "↓", enabled = matchCount > 0, onClick = onNext)
                 CompactFindButton(label = "×", enabled = true, onClick = onClose)
+            }
+            if (!regexValid) {
+                Text(
+                    text = "Expressão regular inválida",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                )
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -890,7 +1363,7 @@ private fun AndroidNoteFindBar(
                 ) { Text("Subst.") }
                 TextButton(
                     onClick = onReplaceAll,
-                    enabled = findQuery.isNotEmpty(),
+                    enabled = findQuery.isNotEmpty() && regexValid,
                     contentPadding = PaddingValues(horizontal = 8.dp),
                 ) { Text("Subst. tudo") }
             }

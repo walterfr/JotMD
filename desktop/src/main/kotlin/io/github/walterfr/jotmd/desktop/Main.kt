@@ -54,7 +54,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -70,12 +72,16 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.walterfr.jotmd.core.OutlineEntry
+import io.github.walterfr.jotmd.core.docRefsOf
 import io.github.walterfr.jotmd.core.docStatsOf
 import io.github.walterfr.jotmd.core.exportToHtml
 import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
+import io.github.walterfr.jotmd.core.isValidSearchRegex
 import io.github.walterfr.jotmd.core.outlineOf
 import io.github.walterfr.jotmd.editor.EditorScreen
+import io.github.walterfr.jotmd.editor.EditorState
+import io.github.walterfr.jotmd.editor.FOOTNOTE_URI
 import io.github.walterfr.jotmd.editor.MdThemePreset
 import io.github.walterfr.jotmd.editor.MdTokens
 import io.github.walterfr.jotmd.editor.TAG_URI
@@ -102,6 +108,13 @@ private const val AUTOSAVE_DELAY_MS = 1000L
 
 private enum class SidebarTab { FILES, OUTLINE }
 
+private sealed interface TreeDialogState {
+    data class NewNote(val parentDir: Path) : TreeDialogState
+    data class NewFolder(val parentDir: Path) : TreeDialogState
+    data class Rename(val entry: DesktopDocEntry) : TreeDialogState
+    data class Delete(val entry: DesktopDocEntry) : TreeDialogState
+}
+
 fun main() = application {
     val tabManager = remember {
         DesktopTabManager().apply {
@@ -112,6 +125,8 @@ fun main() = application {
     var saveAction by remember { mutableStateOf<() -> Unit>({}) }
     var findAction by remember { mutableStateOf<() -> Unit>({}) }
     var quickOpenAction by remember { mutableStateOf<() -> Unit>({}) }
+    var insertTableAction by remember { mutableStateOf<() -> Unit>({}) }
+    var richPasteAction by remember { mutableStateOf<() -> Unit>({}) }
     var escapeAction by remember { mutableStateOf<() -> Boolean>({ false }) }
     var themePreset by remember { mutableStateOf(MdTokens.themePreset) }
     val isDark = themePreset.isDark
@@ -132,6 +147,8 @@ fun main() = application {
                 onFind = findAction,
                 onQuickOpen = quickOpenAction,
                 onToggleSource = { active?.editorState?.toggleSourceMode() },
+                onInsertTable = insertTableAction,
+                onRichPaste = richPasteAction,
                 onEscape = escapeAction,
             )
         },
@@ -145,6 +162,8 @@ fun main() = application {
                 onRegisterSave = { saveAction = it },
                 onRegisterFind = { findAction = it },
                 onRegisterQuickOpen = { quickOpenAction = it },
+                onRegisterInsertTable = { insertTableAction = it },
+                onRegisterRichPaste = { richPasteAction = it },
                 onRegisterEscape = { escapeAction = it },
                 onLaunch = { block -> scope.launch { block() } },
             )
@@ -158,6 +177,8 @@ private fun handleWindowShortcut(
     onFind: () -> Unit,
     onQuickOpen: () -> Unit,
     onToggleSource: () -> Unit,
+    onInsertTable: () -> Unit,
+    onRichPaste: () -> Unit,
     onEscape: () -> Boolean,
 ): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
@@ -178,6 +199,14 @@ private fun handleWindowShortcut(
             onToggleSource()
             true
         }
+        event.isCtrlPressed && event.isShiftPressed && !event.isAltPressed && event.key == Key.V -> {
+            onRichPaste()
+            true
+        }
+        event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed && event.key == Key.T -> {
+            onInsertTable()
+            true
+        }
         event.key == Key.Escape -> onEscape()
         else -> false
     }
@@ -192,6 +221,8 @@ private fun DesktopShell(
     onRegisterSave: (() -> Unit) -> Unit,
     onRegisterFind: (() -> Unit) -> Unit,
     onRegisterQuickOpen: (() -> Unit) -> Unit,
+    onRegisterInsertTable: (() -> Unit) -> Unit,
+    onRegisterRichPaste: (() -> Unit) -> Unit,
     onRegisterEscape: (() -> Boolean) -> Unit,
     onLaunch: (suspend () -> Unit) -> Unit,
 ) {
@@ -210,20 +241,71 @@ private fun DesktopShell(
     var replaceQuery by remember { mutableStateOf("") }
     var caseSensitive by remember { mutableStateOf(false) }
     var wholeWord by remember { mutableStateOf(false) }
+    var findRegex by remember { mutableStateOf(false) }
     var matchCursor by remember { mutableStateOf(0) }
     var showQuickOpen by remember { mutableStateOf(false) }
     var quickOpenQuery by remember { mutableStateOf("") }
+    var treeDialog by remember { mutableStateOf<TreeDialogState?>(null) }
+    var dialogError by remember { mutableStateOf<String?>(null) }
+    var dialogBusy by remember { mutableStateOf(false) }
     val listStates = remember { mutableMapOf<Long, LazyListState>() }
 
     val activeTab = tabManager.activeTab
-    val docMatches = remember(activeTab?.id, activeTab?.editorState?.doc, findQuery, caseSensitive, wholeWord) {
+    val invalidRegex = findRegex && findQuery.isNotEmpty() && !isValidSearchRegex(findQuery)
+    val docMatches = remember(
+        activeTab?.id,
+        activeTab?.editorState?.doc,
+        findQuery,
+        caseSensitive,
+        wholeWord,
+        findRegex,
+        invalidRegex,
+    ) {
         val doc = activeTab?.editorState?.doc ?: return@remember emptyList()
-        findInDocument(doc, findQuery, caseSensitive = caseSensitive, wholeWord = wholeWord)
+        if (invalidRegex) return@remember emptyList()
+        findInDocument(
+            doc,
+            findQuery,
+            caseSensitive = caseSensitive,
+            wholeWord = wholeWord,
+            regex = findRegex,
+        )
     }
 
     LaunchedEffect(docMatches) {
         if (docMatches.isEmpty() || matchCursor >= docMatches.size) {
             matchCursor = 0
+        }
+    }
+
+    LaunchedEffect(
+        showFindBar,
+        activeTab?.id,
+        findQuery,
+        caseSensitive,
+        wholeWord,
+        findRegex,
+        matchCursor,
+        docMatches,
+    ) {
+        val tab = activeTab ?: return@LaunchedEffect
+        if (!showFindBar || findQuery.isEmpty() || invalidRegex) {
+            tab.editorState.clearSearchHighlight()
+        } else {
+            tab.editorState.setSearchHighlight(
+                findQuery,
+                caseSensitive,
+                wholeWord,
+                findRegex,
+                docMatches.getOrNull(matchCursor),
+            )
+        }
+    }
+
+    DisposableEffect(activeTab?.id) {
+        val tab = activeTab
+        onDispose {
+            tab?.editorState?.clearSearchHighlight()
         }
     }
 
@@ -274,6 +356,67 @@ private fun DesktopShell(
         onLaunch { listStates[tab.id]?.animateScrollToItem(match.blockIndex) }
     }
 
+    fun applyToEditor(tab: DesktopTab, action: (EditorState) -> Boolean): Boolean {
+        if (action(tab.editorState)) return true
+        if (tab.editorState.focusedId == null && tab.editorState.doc.blocks.isNotEmpty()) {
+            tab.editorState.focus(tab.editorState.doc.blocks.last())
+            return action(tab.editorState)
+        }
+        return false
+    }
+
+    fun triggerInsertTable() {
+        val tab = tabManager.activeTab ?: return
+        if (applyToEditor(tab) { it.insertTable() }) {
+            showNotice(null)
+        } else {
+            showNotice("Não foi possível inserir tabela aqui", isError = true)
+        }
+    }
+
+    fun triggerRichPaste() {
+        val tab = tabManager.activeTab ?: return
+        when (val payload = readClipboardPayload()) {
+            is ClipboardPayload.Image -> {
+                if (tab.file == null && rootDir == null) {
+                    showNotice("Salve a nota ou abra uma pasta antes de colar imagens.", isError = true)
+                    return
+                }
+                onLaunch {
+                    val dest = withContext(Dispatchers.IO) {
+                        saveClipboardImagePng(payload.image, tab.file, rootDir)
+                    }
+                    if (dest == null) {
+                        showNotice("Erro ao salvar imagem da área de transferência", isError = true)
+                        return@onLaunch
+                    }
+                    if (applyToEditor(tab) { it.insertImageMarkdown("imagem", dest) }) {
+                        showNotice(null)
+                    } else {
+                        showNotice("Posicione o cursor em um bloco para colar a imagem", isError = true)
+                    }
+                }
+            }
+            is ClipboardPayload.Html -> {
+                if (applyToEditor(tab) { it.pasteHtmlAtCursor(payload.html) }) {
+                    showNotice(null)
+                } else {
+                    showNotice("Não foi possível colar HTML neste ponto", isError = true)
+                }
+            }
+            is ClipboardPayload.Text -> {
+                if (applyToEditor(tab) { it.pasteMarkdownAtCursor(payload.text) }) {
+                    showNotice(null)
+                } else {
+                    showNotice("Não foi possível colar texto neste ponto", isError = true)
+                }
+            }
+            ClipboardPayload.Empty -> {
+                showNotice("Área de transferência vazia ou sem conteúdo compatível", isError = true)
+            }
+        }
+    }
+
     onRegisterSave(::triggerSave)
     onRegisterFind {
         showQuickOpen = false
@@ -283,8 +426,17 @@ private fun DesktopShell(
         showQuickOpen = !showQuickOpen
         if (showQuickOpen) quickOpenQuery = ""
     }
+    onRegisterInsertTable(::triggerInsertTable)
+    onRegisterRichPaste(::triggerRichPaste)
     onRegisterEscape {
         when {
+            treeDialog != null -> {
+                if (!dialogBusy) {
+                    treeDialog = null
+                    dialogError = null
+                }
+                true
+            }
             showQuickOpen -> {
                 showQuickOpen = false
                 true
@@ -323,7 +475,7 @@ private fun DesktopShell(
             entries = emptyList()
             return@LaunchedEffect
         }
-        entries = withContext(Dispatchers.IO) { listDesktopTree(dir) }
+        entries = withContext(Dispatchers.IO) { listDesktopTree(dir, includeEmptyDirs = true) }
     }
 
     // Atualiza resultados de busca sem bloquear a thread de UI.
@@ -352,6 +504,17 @@ private fun DesktopShell(
                 query = "#" + uri.removePrefix(TAG_URI)
                 sidebarTab = SidebarTab.FILES
                 sidebarOpen = true
+            }
+            uri.startsWith(FOOTNOTE_URI) -> {
+                val id = uri.removePrefix(FOOTNOTE_URI)
+                val tab = activeTab
+                val def = tab?.let { docRefsOf(it.editorState.doc).resolveFootnote(id) }
+                if (tab == null || def == null) {
+                    showNotice("Nota de rodapé não encontrada: $id", isError = true)
+                } else {
+                    tab.editorState.focusBlockIndex(def.blockIndex)
+                    onLaunch { listStates[tab.id]?.animateScrollToItem(def.blockIndex) }
+                }
             }
             else -> openExternalUri(uri)
         }
@@ -384,6 +547,23 @@ private fun DesktopShell(
                         }
                     },
                     onOpenPath = ::openFile,
+                    onCreateNoteIn = { parentDir ->
+                        dialogError = null
+                        treeDialog = TreeDialogState.NewNote(parentDir)
+                    },
+                    onCreateFolderInRoot = {
+                        val dir = rootDir ?: return@SidebarPanel
+                        dialogError = null
+                        treeDialog = TreeDialogState.NewFolder(dir)
+                    },
+                    onRenameEntry = { entry ->
+                        dialogError = null
+                        treeDialog = TreeDialogState.Rename(entry)
+                    },
+                    onDeleteEntry = { entry ->
+                        dialogError = null
+                        treeDialog = TreeDialogState.Delete(entry)
+                    },
                     onSelectOutlineEntry = { entry ->
                         activeTab?.let { tab ->
                             tab.editorState.focusBlockIndex(entry.blockIndex)
@@ -415,6 +595,8 @@ private fun DesktopShell(
                     },
                     onSave = ::triggerSave,
                     onToggleFind = { showFindBar = !showFindBar },
+                    onInsertTable = ::triggerInsertTable,
+                    onRichPaste = ::triggerRichPaste,
                     onExportHtml = {
                         val tab = activeTab ?: return@HeaderBar
                         onLaunch {
@@ -467,6 +649,8 @@ private fun DesktopShell(
                         replaceQuery = replaceQuery,
                         caseSensitive = caseSensitive,
                         wholeWord = wholeWord,
+                        regex = findRegex,
+                        regexError = invalidRegex,
                         matchIndex = matchCursor,
                         matchCount = docMatches.size,
                         onFindChange = {
@@ -482,6 +666,10 @@ private fun DesktopShell(
                             wholeWord = !wholeWord
                             matchCursor = 0
                         },
+                        onToggleRegex = {
+                            findRegex = !findRegex
+                            matchCursor = 0
+                        },
                         onPrev = { jumpToMatch(matchCursor - 1) },
                         onNext = { jumpToMatch(matchCursor + 1) },
                         onReplaceCurrent = {
@@ -491,13 +679,18 @@ private fun DesktopShell(
                             }
                         },
                         onReplaceAll = {
-                            val replaced = activeTab.editorState.replaceAll(
-                                query = findQuery,
-                                replacement = replaceQuery,
-                                caseSensitive = caseSensitive,
-                                wholeWord = wholeWord,
-                            )
-                            showNotice("$replaced substituído(s)", isError = false)
+                            if (invalidRegex) {
+                                showNotice("Expressão regular inválida", isError = true)
+                            } else {
+                                val replaced = activeTab.editorState.replaceAll(
+                                    query = findQuery,
+                                    replacement = replaceQuery,
+                                    caseSensitive = caseSensitive,
+                                    wholeWord = wholeWord,
+                                    regex = findRegex,
+                                )
+                                showNotice("$replaced substituído(s)", isError = false)
+                            }
                         },
                         onClose = { showFindBar = false },
                     )
@@ -570,6 +763,83 @@ private fun DesktopShell(
                 onDismiss = { showQuickOpen = false },
             )
         }
+        treeDialog?.let { dialog ->
+            TreeCrudModal(
+                dialog = dialog,
+                errorMessage = dialogError,
+                busy = dialogBusy,
+                onDismiss = {
+                    if (!dialogBusy) {
+                        treeDialog = null
+                        dialogError = null
+                    }
+                },
+                onConfirm = { inputName ->
+                    if (dialogBusy) return@TreeCrudModal
+                    dialogBusy = true
+                    dialogError = null
+                    onLaunch {
+                        try {
+                            when (dialog) {
+                                is TreeDialogState.NewNote -> {
+                                    val created = withContext(Dispatchers.IO) {
+                                        createDesktopMarkdownFile(dialog.parentDir, inputName)
+                                    }
+                                    if (created != null) {
+                                        refreshNonce++
+                                        treeDialog = null
+                                        openFile(created)
+                                    } else {
+                                        dialogError = "Nome inválido ou nota já existe."
+                                    }
+                                }
+                                is TreeDialogState.NewFolder -> {
+                                    val created = withContext(Dispatchers.IO) {
+                                        createDesktopFolder(dialog.parentDir, inputName)
+                                    }
+                                    if (created != null) {
+                                        refreshNonce++
+                                        treeDialog = null
+                                        showNotice("Pasta criada: ${created.fileName}")
+                                    } else {
+                                        dialogError = "Nome inválido ou pasta já existe."
+                                    }
+                                }
+                                is TreeDialogState.Rename -> {
+                                    val renamed = withContext(Dispatchers.IO) {
+                                        renameDesktopEntry(dialog.entry.path, inputName)
+                                    }
+                                    if (renamed != null) {
+                                        tabManager.updateRenamedPath(dialog.entry.path, renamed)
+                                        refreshNonce++
+                                        treeDialog = null
+                                        showNotice(null)
+                                    } else {
+                                        dialogError = "Não foi possível renomear (nome inválido ou já existe)."
+                                    }
+                                }
+                                is TreeDialogState.Delete -> {
+                                    val deleted = withContext(Dispatchers.IO) {
+                                        deleteDesktopEntry(dialog.entry.path)
+                                    }
+                                    if (deleted) {
+                                        tabManager.closeRemovedPath(dialog.entry.path)
+                                        listStates.keys.retainAll(tabManager.tabs.map { it.id }.toSet())
+                                        refreshNonce++
+                                        treeDialog = null
+                                        showNotice("Excluído: ${dialog.entry.name}")
+                                    } else {
+                                        dialogError = "Não foi possível excluir \"${dialog.entry.name}\"."
+                                    }
+                                }
+                            }
+                        } finally {
+                            dialogBusy = false
+                        }
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -585,6 +855,10 @@ private fun SidebarPanel(
     activeTab: DesktopTab?,
     onPickFolder: () -> Unit,
     onOpenPath: (Path) -> Unit,
+    onCreateNoteIn: (Path) -> Unit,
+    onCreateFolderInRoot: () -> Unit,
+    onRenameEntry: (DesktopDocEntry) -> Unit,
+    onDeleteEntry: (DesktopDocEntry) -> Unit,
     onSelectOutlineEntry: (OutlineEntry) -> Unit,
 ) {
     Column(
@@ -632,6 +906,21 @@ private fun SidebarPanel(
             }
 
             if (rootDir != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SidebarActionChip(
+                        label = "+ Nota",
+                        onClick = { onCreateNoteIn(rootDir) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SidebarActionChip(
+                        label = "+ Pasta",
+                        onClick = onCreateFolderInRoot,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
@@ -693,23 +982,40 @@ private fun SidebarPanel(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(entries, key = { it.path.toString() }) { entry ->
-                        Text(
-                            text = if (entry.isDir) "${entry.name}/" else entry.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (entry.isDir) MdTokens.muted else MdTokens.text,
-                            fontWeight = if (entry.isDir) FontWeight.Medium else FontWeight.Normal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        val activeNorm = activeTab?.file?.toAbsolutePath()?.normalize()
+                        val isOpenFile = !entry.isDir && activeNorm == entry.path.toAbsolutePath().normalize()
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .background(if (isOpenFile) MdTokens.background else Color.Transparent)
                                 .clickable(enabled = !entry.isDir) { onOpenPath(entry.path) }
                                 .padding(
-                                    start = (12 + 14 * entry.depth).dp,
-                                    top = 7.dp,
-                                    end = 12.dp,
-                                    bottom = 7.dp,
+                                    start = (12 + minOf(entry.depth, 6) * 12).dp,
+                                    top = 4.dp,
+                                    end = 6.dp,
+                                    bottom = 4.dp,
                                 ),
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (entry.isDir) "${entry.name}/" else entry.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (entry.isDir) MdTokens.muted else MdTokens.text,
+                                fontWeight = when {
+                                    isOpenFile -> FontWeight.SemiBold
+                                    entry.isDir -> FontWeight.Medium
+                                    else -> FontWeight.Normal
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(vertical = 3.dp),
+                            )
+                            if (entry.isDir) {
+                                TreeEntryAction(label = "+", onClick = { onCreateNoteIn(entry.path) })
+                            }
+                            TreeEntryAction(label = "✎", onClick = { onRenameEntry(entry) })
+                            TreeEntryAction(label = "×", onClick = { onDeleteEntry(entry) })
+                        }
                     }
                 }
             }
@@ -755,6 +1061,49 @@ private fun SidebarPanel(
 }
 
 @Composable
+private fun SidebarActionChip(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(4.dp),
+        color = MdTokens.background,
+        border = BorderStroke(1.dp, MdTokens.tableBorder),
+    ) {
+        Box(
+            modifier = Modifier.padding(vertical = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MdTokens.text,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TreeEntryAction(
+    label: String,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = MdTokens.muted,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
 private fun SidebarTabChip(
     label: String,
     selected: Boolean,
@@ -796,6 +1145,8 @@ private fun HeaderBar(
     onNewTab: () -> Unit,
     onSave: () -> Unit,
     onToggleFind: () -> Unit,
+    onInsertTable: () -> Unit,
+    onRichPaste: () -> Unit,
     onExportHtml: () -> Unit,
     onExportPdf: () -> Unit,
     onToggleSource: () -> Unit,
@@ -819,6 +1170,8 @@ private fun HeaderBar(
             TextButton(onClick = onNewTab) { Text("Nova aba") }
             TextButton(onClick = onSave) { Text("Salvar") }
             TextButton(onClick = onToggleFind) { Text(if (findOpen) "Fechar busca" else "Buscar") }
+            HeaderTapButton(label = "Tabela", onClick = onInsertTable)
+            HeaderTapButton(label = "Colar+", onClick = onRichPaste)
             TextButton(onClick = onExportHtml) { Text("Exportar HTML") }
             TextButton(onClick = onExportPdf) { Text("Exportar PDF") }
             TextButton(onClick = onToggleSource) {
@@ -855,18 +1208,44 @@ private fun HeaderBar(
     }
 }
 
+/** Botão de cabeçalho sem foco próprio para preservar seleção e cursor do editor (Armadilha 5). */
+@Composable
+private fun HeaderTapButton(
+    label: String,
+    onClick: () -> Unit,
+) {
+    val currentOnClick = rememberUpdatedState(onClick)
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick.value() }) }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun DesktopNoteFindBar(
     findQuery: String,
     replaceQuery: String,
     caseSensitive: Boolean,
     wholeWord: Boolean,
+    regex: Boolean,
+    regexError: Boolean,
     matchIndex: Int,
     matchCount: Int,
     onFindChange: (String) -> Unit,
     onReplaceChange: (String) -> Unit,
     onToggleCaseSensitive: () -> Unit,
     onToggleWholeWord: () -> Unit,
+    onToggleRegex: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onReplaceCurrent: () -> Unit,
@@ -890,12 +1269,18 @@ private fun DesktopNoteFindBar(
                 value = findQuery,
                 onValueChange = onFindChange,
                 placeholder = { Text("Buscar na nota") },
+                isError = regexError,
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
             DesktopFindOptionChip(label = "Aa", active = caseSensitive, onClick = onToggleCaseSensitive)
             DesktopFindOptionChip(label = "[ab]", active = wholeWord, onClick = onToggleWholeWord)
-            Text(counter, style = MaterialTheme.typography.bodySmall, color = MdTokens.muted)
+            DesktopFindOptionChip(label = ".*", active = regex, onClick = onToggleRegex)
+            if (regexError) {
+                Text("Regex inválida", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            } else {
+                Text(counter, style = MaterialTheme.typography.bodySmall, color = MdTokens.muted)
+            }
             TextButton(onClick = onPrev, enabled = matchCount > 0) { Text("Anterior") }
             TextButton(onClick = onNext, enabled = matchCount > 0) { Text("Próximo") }
             TextButton(onClick = onClose, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("×") }
@@ -913,7 +1298,155 @@ private fun DesktopNoteFindBar(
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onReplaceCurrent, enabled = matchCount > 0) { Text("Substituir") }
-            TextButton(onClick = onReplaceAll, enabled = findQuery.isNotEmpty()) { Text("Substituir tudo") }
+            TextButton(onClick = onReplaceAll, enabled = findQuery.isNotEmpty() && !regexError) { Text("Substituir tudo") }
+        }
+    }
+}
+
+@Composable
+private fun TreeCrudModal(
+    dialog: TreeDialogState,
+    errorMessage: String?,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val initialText = when (dialog) {
+        is TreeDialogState.Rename -> dialog.entry.name
+        else -> ""
+    }
+    var inputText by remember(dialog) { mutableStateOf(initialText) }
+    val focusRequester = remember { FocusRequester() }
+    val isDelete = dialog is TreeDialogState.Delete
+
+    LaunchedEffect(dialog) {
+        if (!isDelete) focusRequester.requestFocus()
+    }
+
+    val title = when (dialog) {
+        is TreeDialogState.NewNote -> "Nova nota"
+        is TreeDialogState.NewFolder -> "Nova pasta"
+        is TreeDialogState.Rename -> "Renomear ${if (dialog.entry.isDir) "pasta" else "nota"}"
+        is TreeDialogState.Delete -> "Excluir ${if (dialog.entry.isDir) "pasta" else "nota"}"
+    }
+    val placeholder = when (dialog) {
+        is TreeDialogState.NewNote -> "Nome da nota (ex.: resumo.md)"
+        is TreeDialogState.NewFolder -> "Nome da pasta"
+        is TreeDialogState.Rename -> "Novo nome"
+        is TreeDialogState.Delete -> ""
+    }
+    val confirmLabel = when (dialog) {
+        is TreeDialogState.NewNote, is TreeDialogState.NewFolder -> "Criar"
+        is TreeDialogState.Rename -> "Renomear"
+        is TreeDialogState.Delete -> "Excluir"
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(380.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        onDismiss()
+                        true
+                    } else {
+                        false
+                    }
+                },
+            shape = RoundedCornerShape(8.dp),
+            color = MdTokens.fenceBackground,
+            border = BorderStroke(1.dp, MdTokens.tableBorder),
+            shadowElevation = 12.dp,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MdTokens.text,
+                )
+                if (dialog is TreeDialogState.NewNote) {
+                    Text(
+                        text = "Pasta: ${dialog.parentDir.fileName ?: dialog.parentDir}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MdTokens.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (dialog is TreeDialogState.Delete) {
+                    val extra = if (dialog.entry.isDir) " e todo o seu conteúdo" else ""
+                    Text(
+                        text = "Excluir \"${dialog.entry.name}\"$extra? Esta ação não pode ser desfeita.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MdTokens.text,
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = { Text(placeholder) },
+                        singleLine = true,
+                        enabled = !busy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .onPreviewKeyEvent { event ->
+                                when {
+                                    event.type == KeyEventType.KeyDown &&
+                                        (event.key == Key.Enter || event.key == Key.NumPadEnter) -> {
+                                        onConfirm(inputText)
+                                        true
+                                    }
+                                    event.type == KeyEventType.KeyDown && event.key == Key.Escape -> {
+                                        onDismiss()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            },
+                    )
+                }
+                if (!errorMessage.isNullOrEmpty()) {
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss, enabled = !busy) {
+                        Text("Cancelar")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { onConfirm(inputText) }, enabled = !busy) {
+                        Text(
+                            text = confirmLabel,
+                            color = if (isDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
         }
     }
 }

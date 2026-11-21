@@ -27,15 +27,21 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.walterfr.jotmd.core.Block
 import io.github.walterfr.jotmd.core.BlockType
+import io.github.walterfr.jotmd.core.DocRefs
 import io.github.walterfr.jotmd.core.OutlineEntry
 import io.github.walterfr.jotmd.editor.ops.activeLine1Based
 import io.github.walterfr.jotmd.editor.ops.formatSourceGutter
+import io.github.walterfr.jotmd.editor.ops.highlightMarkdownSource
 
 /**
  * Um bloco editável: focado mostra o markdown cru num [BasicTextField],
@@ -52,12 +58,16 @@ fun BlockEditor(
     state: EditorState,
     modifier: Modifier = Modifier,
     outline: List<OutlineEntry> = emptyList(),
+    refs: DocRefs = DocRefs.EMPTY,
 ) {
     val itemModifier = if (state.isFocusMode && state.focusedId != null && state.focusedId != block.id) {
         modifier.alpha(0.38f)
     } else {
         modifier
     }
+    val activeSearchRange = state.activeSearchMatch
+        ?.takeIf { it.blockId == block.id }
+        ?.rangeInBlock
 
     when {
         state.focusedId == block.id -> {
@@ -68,19 +78,30 @@ fun BlockEditor(
                 Row(itemModifier.fillMaxWidth()) {
                     SourceGutter(formatSourceGutter(totalLines, activeLine))
                     Spacer(Modifier.width(8.dp))
-                    FocusedBlockField(block, state, Modifier.weight(1f))
+                    FocusedBlockField(block, state, activeSearchRange, Modifier.weight(1f))
                 }
             } else {
-                FocusedBlockField(block, state, itemModifier.fillMaxWidth())
+                FocusedBlockField(block, state, activeSearchRange, itemModifier.fillMaxWidth())
             }
         }
         state.isSourceMode -> {
             val totalLines = block.source.count { it == '\n' } + 1
+            val highlighted = remember(
+                block.source,
+                MdTokens.themePreset,
+                state.searchHighlightQuery,
+                state.searchHighlightCaseSensitive,
+                state.searchHighlightWholeWord,
+                state.searchHighlightRegex,
+                activeSearchRange,
+            ) {
+                buildSourceHighlight(block.source, state, activeSearchRange)
+            }
             Row(itemModifier.fillMaxWidth().clickable { state.focus(block) }) {
                 SourceGutter(formatSourceGutter(totalLines, activeLine1Based = null))
                 Spacer(Modifier.width(8.dp))
                 BasicText(
-                    text = block.source,
+                    text = highlighted,
                     modifier = Modifier.weight(1f),
                     style = sourceStyle,
                 )
@@ -98,6 +119,16 @@ fun BlockEditor(
                 onTableAddColumn = { state.tableAddColumn(block.id) },
                 onTableRemoveColumn = { state.tableRemoveColumn(block.id) },
                 onTableCycleAlign = { col -> state.tableCycleAlignment(block.id, col) },
+                refs = refs,
+                searchQuery = state.searchHighlightQuery,
+                searchCaseSensitive = state.searchHighlightCaseSensitive,
+                searchWholeWord = state.searchHighlightWholeWord,
+                searchRegex = state.searchHighlightRegex,
+                activeSearchRange = activeSearchRange,
+                onTableMoveRow = { delta -> state.tableMoveRow(block.id, delta) },
+                onTableMoveColumn = { delta ->
+                    state.tableMoveColumn(block.id, if (delta < 0) 1 else 0, delta)
+                },
             )
         }
     }
@@ -107,11 +138,32 @@ fun BlockEditor(
 private fun FocusedBlockField(
     block: Block,
     state: EditorState,
+    activeSearchRange: IntRange?,
     modifier: Modifier = Modifier,
 ) {
     var hadFocus by remember(block.id) { mutableStateOf(false) }
     val focusRequester = remember(block.id) { FocusRequester() }
     LaunchedEffect(block.id) { focusRequester.requestFocus() }
+    val visualTransformation = remember(
+        state.isSourceMode,
+        MdTokens.themePreset,
+        state.searchHighlightQuery,
+        state.searchHighlightCaseSensitive,
+        state.searchHighlightWholeWord,
+        state.searchHighlightRegex,
+        activeSearchRange,
+    ) {
+        if (!state.isSourceMode) {
+            VisualTransformation.None
+        } else {
+            VisualTransformation { text ->
+                TransformedText(
+                    buildSourceHighlight(text.text, state, activeSearchRange),
+                    OffsetMapping.Identity,
+                )
+            }
+        }
+    }
     BasicTextField(
         value = state.editValue,
         onValueChange = { state.edit(it, block.id) },
@@ -124,6 +176,32 @@ private fun FocusedBlockField(
             .onPreviewKeyEvent { event -> handleKey(event, block, state) },
         textStyle = sourceStyle,
         cursorBrush = SolidColor(MdTokens.link),
+        visualTransformation = visualTransformation,
+    )
+}
+
+private fun buildSourceHighlight(
+    source: String,
+    state: EditorState,
+    activeSearchRange: IntRange?,
+): AnnotatedString {
+    val base = highlightMarkdownSource(source)
+    if (state.searchHighlightQuery.isEmpty()) return base
+    val activeOcc = activeOccurrenceIndex(
+        source,
+        activeSearchRange,
+        state.searchHighlightQuery,
+        state.searchHighlightCaseSensitive,
+        state.searchHighlightWholeWord,
+        state.searchHighlightRegex,
+    )
+    return applySearchHighlight(
+        base,
+        state.searchHighlightQuery,
+        state.searchHighlightCaseSensitive,
+        state.searchHighlightWholeWord,
+        state.searchHighlightRegex,
+        activeOcc,
     )
 }
 
@@ -142,7 +220,7 @@ private fun SourceGutter(text: String) {
 
 /**
  * Enter, Backspace no início, Delete no fim, `Tab`/`Shift+Tab`, `↑`/`↓` nas
- * bordas e atalhos `Ctrl+*` (`B`, `I`, `U`, `K`, `Z`, `Y`, `Shift+Z`, `/`).
+ * bordas e atalhos `Ctrl+*` (`B`, `I`, `U`, `K`, `T`, `Z`, `Y`, `Shift+Z`, `/`).
  */
 private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
@@ -178,6 +256,7 @@ private fun handleKey(event: KeyEvent, block: Block, state: EditorState): Boolea
             state.wrapSelection("[", "]()")
             true
         }
+        event.isCtrlPressed && event.key == Key.T -> state.insertTable()
         event.isCtrlPressed && event.key == Key.Slash -> {
             state.toggleSourceMode()
             true
