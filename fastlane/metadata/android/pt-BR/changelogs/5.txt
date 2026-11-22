@@ -1,0 +1,4 @@
+Versão 0.3.2 (Pride Versioning):
+- Ícone de alto contraste (folha escura) visível na splash screen clara e escura do Android 12+
+- Suporte a ícone monocromático temático no Android 13+
+- Inclusão do mesmo ícone na janela do Windows Desktop e nos instaladores

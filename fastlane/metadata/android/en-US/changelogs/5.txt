@@ -1,0 +1,4 @@
+Release 0.3.2 (Pride Versioning):
+- High-contrast dark-sheet app icon for Android 12+ light/dark splash screens
+- Monochrome themed icon support on Android 13+
+- Matching application icon bundled in the Windows Desktop window and installers

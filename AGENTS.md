@@ -135,13 +135,17 @@ Verificado em tablet Android (`TB361FU - 16`, Android 16 via `adb`):
   validação completa da `v0.3.0`: CRUD SAF, TOC, LaTeX, realce sintático 1:1,
   busca regex `.*`, modos `</>`/`Foco`, tema `Night` e tabela `3x4`).
 
-Concluído para submissão ao F-Droid (`v0.3.1`, `versionCode 4`):
+Concluído para submissão ao F-Droid (`v0.3.2`, `versionCode 5`):
 
-- Ícone adaptativo vetorial (`ic_launcher_background`/`ic_launcher_foreground`)
-  e mipmaps PNG legados (`mipmap-*`), banner `featureGraphic.png` (`pt-BR` e
-  `en-US`), ícone `512x512` e screenshots tablet `tenInchScreenshots/` no
-  Fastlane; módulo `:desktop` isolado via `-PandroidOnly=true` / `rm: [desktop]`
-  no `settings.gradle.kts`, `distributionSha256Sum` no `gradle-wrapper.properties`
+- Ícone adaptativo vetorial de alto contraste (folha grafite `#1F2328` sobre
+  `#EEF2F6` com `ic_launcher_monochrome` e temas API 31+ `values-v31` /
+  `values-night-v31` para visibilidade na splash screen clara e escura),
+  mipmaps PNG legados (`mipmap-*`), banner `featureGraphic.png` (`pt-BR` e
+  `en-US`), ícone `512x512`, screenshots tablet `tenInchScreenshots/` no
+  Fastlane e ícone Windows (`desktop/src/main/resources/jotmd-icon.png` e
+  `jotmd.ico` multi-resolução na janela Compose + `nativeDistributions.windows`);
+  módulo `:desktop` isolado via `-PandroidOnly=true` / `rm: [desktop]` no
+  `settings.gradle.kts`, `distributionSha256Sum` no `gradle-wrapper.properties`
   e receita `fdroid/io.github.walterfr.jotmd.yml` (`AutoUpdateMode: Version v%v`,
   `Donate`, ordem do `fdroidserver`).
 

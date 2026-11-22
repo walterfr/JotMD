@@ -51,6 +51,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -103,6 +106,7 @@ import javax.swing.SwingUtilities
 import javax.swing.UIManager
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import org.jetbrains.skia.Image as SkiaImage
 
 private const val AUTOSAVE_DELAY_MS = 1000L
 
@@ -139,6 +143,7 @@ fun main() = application {
             exitApplication()
         },
         title = "JotMD — $dirtyMark${active?.title ?: "Sem Título"}",
+        icon = remember { loadWindowIcon() },
         state = rememberWindowState(width = 1120.dp, height = 760.dp),
         onPreviewKeyEvent = { event ->
             handleWindowShortcut(
@@ -1829,3 +1834,11 @@ private suspend fun pickExportSaveFile(
         cont.resume(chosen)
     }
 }
+
+private fun loadWindowIcon(): Painter? = runCatching {
+    val bytes = DesktopTabManager::class.java.classLoader
+        ?.getResourceAsStream("jotmd-icon.png")
+        ?.use { it.readBytes() }
+        ?: return null
+    BitmapPainter(SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap())
+}.getOrNull()

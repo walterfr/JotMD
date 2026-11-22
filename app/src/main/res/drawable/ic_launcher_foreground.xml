@@ -4,24 +4,26 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Folha de papel arredondada dentro da zona segura (r <= 33) -->
+    <!-- Folha escura em alto contraste sobre fundo claro (inclusive splash screen branca) -->
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#1F2328"
+        android:strokeColor="#3B434B"
+        android:strokeWidth="1.2"
         android:pathData="M37.5,29L63,29L74,40L74,75.5A3.5,3.5 0,0 1,70.5 79L37.5,79A3.5,3.5 0,0 1,34 75.5L34,32.5A3.5,3.5 0,0 1,37.5 29Z" />
-    <!-- Dobra sutil no canto superior direito -->
+    <!-- Dobra no canto superior direito -->
     <path
-        android:fillColor="#D0D7DE"
+        android:fillColor="#3B434B"
         android:pathData="M63,29L63,37.5A2.5,2.5 0,0 0,65.5 40L74,40Z" />
     <!-- Letra M -->
     <path
-        android:fillColor="#1F2328"
+        android:fillColor="#FFFFFF"
         android:pathData="M40,65L40,46L43.2,46L48,54.8L52.8,46L56,46L56,65L52.8,65L52.8,52.2L48,60.2L43.2,52.2L43.2,65Z" />
     <!-- Seta Markdown para baixo -->
     <path
-        android:fillColor="#0969DA"
+        android:fillColor="#58A6FF"
         android:pathData="M62.6,46L65.4,46L65.4,59.5L67.8,57.1L69.6,59.0L64,65L58.4,59.0L60.2,57.1L62.6,59.5Z" />
     <!-- Linha de texto de apoio -->
     <path
-        android:fillColor="#D0D7DE"
+        android:fillColor="#6E7681"
         android:pathData="M41.2,69.5h26.6a1.2,1.2 0,0 1,0 2.4h-26.6a1.2,1.2 0,0 1,0 -2.4z" />
 </vector>

@@ -467,4 +467,28 @@ class DesktopWorkspaceTest {
         )
         assertTrue(readClipboardPayload(clipboard) is ClipboardPayload.Image)
     }
+
+    @Test
+    fun `recursos de icone Windows estao presentes no classpath em PNG e ICO multi-resolucao`() {
+        val loader = DesktopWorkspaceTest::class.java.classLoader
+        val png = loader.getResourceAsStream("jotmd-icon.png")?.use { it.readBytes() }
+        assertNotNull(png, "jotmd-icon.png deve existir nos resources do desktop")
+        assertTrue(
+            png.size > 8 &&
+                png[0] == 0x89.toByte() && png[1] == 0x50.toByte() &&
+                png[2] == 0x4E.toByte() && png[3] == 0x47.toByte(),
+            "jotmd-icon.png deve ter cabecalho PNG valido",
+        )
+
+        val ico = loader.getResourceAsStream("jotmd.ico")?.use { it.readBytes() }
+        assertNotNull(ico, "jotmd.ico deve existir nos resources do desktop")
+        assertTrue(
+            ico.size > 22 &&
+                ico[0] == 0.toByte() && ico[1] == 0.toByte() &&
+                ico[2] == 1.toByte() && ico[3] == 0.toByte(),
+            "jotmd.ico deve ter cabecalho ICONDIR valido",
+        )
+        val count = (ico[4].toInt() and 0xFF) or ((ico[5].toInt() and 0xFF) shl 8)
+        assertTrue(count >= 5, "jotmd.ico deve conter ao menos 5 resolucoes")
+    }
 }
