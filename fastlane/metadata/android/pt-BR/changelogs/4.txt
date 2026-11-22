@@ -1,0 +1,5 @@
+Versão 0.3.1 (Pride Versioning):
+- Ícone próprio vetorial adaptativo e mipmaps legados (substituindo o ícone padrão do sistema)
+- Pacote completo de gráficos Fastlane, banner featureGraphic e capturas de tela para o F-Droid
+- Isolamento do módulo :desktop para build Android-only e verificação SHA-256 no Gradle Wrapper
+- Comportamento do SmartBackspace no SwiftKey e suite v0.3.x validados em aparelho real Android 16

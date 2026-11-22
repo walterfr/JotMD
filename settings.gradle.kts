@@ -18,4 +18,6 @@ rootProject.name = "JotMD"
 include(":core-md")
 include(":editor")
 include(":app")
-include(":desktop")
+if (file("desktop/build.gradle.kts").isFile && providers.gradleProperty("androidOnly").orNull != "true") {
+    include(":desktop")
+}

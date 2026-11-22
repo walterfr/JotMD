@@ -4,22 +4,28 @@ Categories:
   - Reading
 License: MIT
 AuthorName: Walter Rebouças
+WebSite: https://github.com/walterfr/JotMD
 SourceCode: https://github.com/walterfr/JotMD
 IssueTracker: https://github.com/walterfr/JotMD/issues
+Changelog: https://github.com/walterfr/JotMD/releases
+Donate: https://github.com/sponsors/walterfr
+
+AutoName: JotMD
 
 RepoType: git
 Repo: https://github.com/walterfr/JotMD.git
 
 Builds:
-  - versionName: 0.3.0
-    versionCode: 3
-    commit: v0.3.0
+  - versionName: 0.3.1
+    versionCode: 4
+    commit: v0.3.1
     subdir: app
     gradle:
       - yes
+    rm:
+      - desktop
 
-# Se mantiver o prefixo "v" nas tags (ex.: v0.3.0), considere AutoUpdateMode: Version v%v no fdroiddata.
-AutoUpdateMode: Version
-UpdateCheckMode: Tags
-CurrentVersion: 0.3.0
-CurrentVersionCode: 3
+AutoUpdateMode: Version v%v
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+CurrentVersion: 0.3.1
+CurrentVersionCode: 4

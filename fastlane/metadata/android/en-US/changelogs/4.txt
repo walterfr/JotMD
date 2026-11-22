@@ -1,0 +1,5 @@
+Release 0.3.1 (Pride Versioning):
+- Dedicated vector adaptive & legacy app icons (replacing system fallback icon)
+- Complete Fastlane graphics, feature banners, and tablet screenshots for F-Droid
+- Gradle Android-only build option and SHA-256 verification on the Gradle wrapper
+- Hardware-verified SwiftKey SmartBackspace batchEdit handling and full v0.3.x test pass

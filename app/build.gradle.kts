@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.walterfr.jotmd"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
     }
 
     val releaseKeystorePath = System.getenv("KEYSTORE_PATH")

@@ -129,14 +129,26 @@ Verificado em tablet Android (`TB361FU - 16`, Android 16 via `adb`):
   `MdParser.kt` + `RoundtripTest.kt` (re-verificado na tela); (3) `Backspace`/
   `Enter` do IME virtual chegando por `InputConnection` -> `EditorState.edit()`
   com filtro contra eco stale de `batchEdit` do SwiftKey (`EditorState.kt` +
-  `EditorStateTest.kt`; re-teste final em aparelho pausado antes de rodar
-  porque outro app tomou foco).
+  `EditorStateTest.kt`; re-validado no aparelho em 2026-11-22 com toques reais
+  nas teclas `Enter`/`Backspace` do Microsoft SwiftKey: `SmartEnter` e
+  `SmartBackspace` em cascata persistiram limpos em disco sem eco stale, além de
+  validação completa da `v0.3.0`: CRUD SAF, TOC, LaTeX, realce sintático 1:1,
+  busca regex `.*`, modos `</>`/`Foco`, tema `Night` e tabela `3x4`).
+
+Concluído para submissão ao F-Droid (`v0.3.1`, `versionCode 4`):
+
+- Ícone adaptativo vetorial (`ic_launcher_background`/`ic_launcher_foreground`)
+  e mipmaps PNG legados (`mipmap-*`), banner `featureGraphic.png` (`pt-BR` e
+  `en-US`), ícone `512x512` e screenshots tablet `tenInchScreenshots/` no
+  Fastlane; módulo `:desktop` isolado via `-PandroidOnly=true` / `rm: [desktop]`
+  no `settings.gradle.kts`, `distributionSha256Sum` no `gradle-wrapper.properties`
+  e receita `fdroid/io.github.walterfr.jotmd.yml` (`AutoUpdateMode: Version v%v`,
+  `Donate`, ordem do `fdroidserver`).
 
 Pendente:
 
-- Re-validar interativamente no tablet o ajuste final de eco stale do
-  `batchEdit` no `SmartBackspace` via SwiftKey, e testar geração de pacote
-  release/tag atualizada antes da submissão ao `fdroiddata`.
+- Abrir Merge Request no `fdroiddata` copiando `fdroid/io.github.walterfr.jotmd.yml`
+  para `metadata/io.github.walterfr.jotmd.yml`.
 
 ## Armadilhas já pagas (não repetir)
 
