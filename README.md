@@ -6,6 +6,8 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1.21-7F52FF.svg)](gradle/libs.versions.toml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84.svg)](app/build.gradle.kts)
 [![Windows](https://img.shields.io/badge/Windows-Compose%20Desktop-0078D4.svg)](desktop/build.gradle.kts)
+[![Sponsor](https://img.shields.io/badge/sponsor-%E2%99%A5-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/walterfr)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-apoiar-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/walterfr)
 
 Leitor e editor de Markdown nativo para **Android** e **Windows Desktop**, com UI/UX inspirada no [Typora](https://typora.io/). Construído **100% em Jetpack Compose / Compose Multiplatform**, sem WebView e sem telemetria.
 
@@ -168,6 +170,26 @@ O JotMD adota o [**Pride Versioning**](https://pridever.org/) (`PROUD.DEFAULT.SH
 - [`DESIGN.md`](DESIGN.md) — tokens visuais medidos no Typora, arquitetura de foco, CSS e matriz de paridade.
 - [`AI_CONTEXT.md`](AI_CONTEXT.md) — decisões originais de arquitetura e histórico de roadmap.
 - [`docs/typora-ref.md`](docs/typora-ref.md) — documento de referência usado nos testes visuais e de roundtrip.
+
+---
+
+## Apoie o projeto
+
+O JotMD é gratuito e de código aberto. Se ele te ajudou, considere apoiar o desenvolvimento — qualquer contribuição ajuda a manter e melhorar o projeto:
+
+- ❤️ [GitHub Sponsors](https://github.com/sponsors/walterfr)
+- ☕ [Ko-fi](https://ko-fi.com/walterfr)
+- ☕ [Buy Me a Coffee](https://buymeacoffee.com/walterfr)
+
+### Pix (Brasil)
+
+Escaneie o QR code no app do seu banco, ou use a chave **copia e cola** abaixo:
+
+<img src="docs/pix-qr.png" alt="QR Code Pix" width="200" />
+
+```
+00020101021126400014br.gov.bcb.pix0118walterfr@gmail.com5204000053039865802BR5915WALTER REBOUCAS6009FORTALEZA62070503***63045603
+```
 
 ---
 
