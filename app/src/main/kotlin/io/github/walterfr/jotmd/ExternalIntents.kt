@@ -43,6 +43,23 @@ sealed interface IncomingAction {
     data class SharedText(val title: String, val text: String) : IncomingAction
 }
 
+/** Envelope sequencial para evitar auto-cancelamento de `LaunchedEffect` ao consumir intent. */
+data class IncomingIntentEvent<T>(val seq: Long, val payload: T)
+
+fun <T> consumeIncomingEvent(
+    current: IncomingIntentEvent<T>?,
+    handledSeq: Long,
+): IncomingIntentEvent<T>? = if (current?.seq == handledSeq) null else current
+
+fun sharedTextAction(subject: String?, text: String?): IncomingAction.SharedText? {
+    if (text.isNullOrEmpty()) return null
+    val title = subject
+        ?.takeIf(String::isNotBlank)
+        ?.let { sanitizeFileName(it, ensureMarkdownExtension = true) }
+        ?: "Sem Título.md"
+    return IncomingAction.SharedText(title = title, text = text)
+}
+
 /**
  * Classifica um arquivo recebido por extensão de [fileName] e, se ausente ou
  * genérica, pelo [mimeType] normalizado. Pura para testes JVM.
@@ -80,16 +97,10 @@ fun extractIncomingAction(intent: Intent?, resolver: ContentResolver?): Incoming
             if (extraStream != null) {
                 classifyUriAction(extraStream, intent.type, resolver)?.let { return it }
             }
-            val extraText = intent.getStringExtra(Intent.EXTRA_TEXT)
-            if (!extraText.isNullOrEmpty()) {
-                val title = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-                    ?.takeIf(String::isNotBlank)
-                    ?.let { sanitizeFileName(it, ensureMarkdownExtension = true) }
-                    ?: "Sem Título.md"
-                IncomingAction.SharedText(title = title, text = extraText)
-            } else {
-                null
-            }
+            return sharedTextAction(
+                subject = intent.getStringExtra(Intent.EXTRA_SUBJECT),
+                text = intent.getStringExtra(Intent.EXTRA_TEXT),
+            )
         }
 
         else -> null

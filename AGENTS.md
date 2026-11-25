@@ -155,6 +155,11 @@ Concluído em `v0.4.0` (`versionCode 6`):
 - **Importação & recuperação:** `DocumentImport` puro em Kotlin para HTML/DOCX/EPUB (XXE + limite ZIP) e `DraftStore` com escrita atômica (`writeTextAtomic`) e recuperação de rascunhos (`DraftRepository`).
 - **Abertura externa & paridade UI Typora:** `ExternalIntents` (`VIEW`/`EDIT`/`SEND` em `.md`/texto), associação `.md` no Desktop CLI e MSI/EXE (excluída em `AppImage`), preservação do foco/cursor ao alternar `</>` (`key(block.id)`), estilos de sidebar/overflow `⋮`/modal de Contagem de Palavras em 4 linhas e CI Node 24 (`release.yml`).
 
+Concluído em `v0.4.1` (`versionCode 7`):
+
+- Correção de `LaunchedEffect(incomingEvent)` em `MainActivity.kt` consumindo o intent apenas no bloco `finally` após `withContext(Dispatchers.IO)`, adicionando `IncomingIntentEvent`/`consumeIncomingEvent` em `ExternalIntents.kt`.
+- `.imePadding()` em `ModalDrawerSheet` e `keyboardController?.hide()` ao abrir a gaveta lateral no Android para manter o rodapé de Contagem de Palavras visível acima do teclado virtual, além de `phoneScreenshots/` em retrato (`800x1280`).
+
 Pendente:
 
 - Abrir Merge Request no `fdroiddata` copiando `fdroid/io.github.walterfr.jotmd.yml`
@@ -202,6 +207,11 @@ Pendente:
 12. **BOM UTF-8 (`\uFEFF`) na linha 1:** arquivos criados no Windows podem começar
     com `\uFEFF` antes de `---`; `MdParser.parse` preserva o `\uFEFF` em
     `DocState.leading` para não quebrar `FRONT_MATTER` nem o roundtrip byte a byte.
+13. **`LaunchedEffect(key)` nunca deve limpar a própria chave antes de suspender:**
+    se `LaunchedEffect(incomingEvent)` chama `onConsumeIntent()` antes de
+    `withContext(Dispatchers.IO)`, a mudança de chave cancela a corrotina no meio
+    da leitura e descarta o intent. Envelopar com `IncomingIntentEvent` e consumir
+    no `finally` após o tratamento (`MainActivity.kt`).
 
 ## Regras de trabalho
 

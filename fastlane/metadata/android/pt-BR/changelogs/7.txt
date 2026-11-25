@@ -1,0 +1,3 @@
+- Corrige abertura de arquivos e textos externos via VIEW/EDIT/SEND sem cancelar a leitura em segundo plano
+- Oculta o teclado virtual e ajusta o espacamento ao abrir a gaveta lateral para manter a contagem de palavras visivel
+- Adiciona capturas em formato retrato para listagem nas lojas

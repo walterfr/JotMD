@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -77,6 +78,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import io.github.walterfr.jotmd.core.DraftRepository
@@ -176,11 +178,12 @@ private class PickRoot : ActivityResultContracts.OpenDocumentTree() {
 }
 
 class MainActivity : ComponentActivity() {
-    private var incomingIntent by mutableStateOf<Intent?>(null)
+    private var incomingSeq = 0L
+    private var incomingEvent by mutableStateOf<IncomingIntentEvent<Intent>?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        incomingIntent = intent
+        incomingEvent = intent?.let { IncomingIntentEvent(++incomingSeq, it) }
         enableEdgeToEdge()
         setContent {
             val context = LocalContext.current
@@ -221,8 +224,8 @@ class MainActivity : ComponentActivity() {
                                 saveAndroidPrefs(prefs, normalized)
                                 MdTokens.applyPreferences(normalized)
                             },
-                            incomingIntent = incomingIntent,
-                            onConsumeIntent = { incomingIntent = null },
+                            incomingEvent = incomingEvent,
+                            onConsumeIntent = { seq -> incomingEvent = consumeIncomingEvent(incomingEvent, seq) },
                         )
                     }
                 }
@@ -233,7 +236,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        incomingIntent = intent
+        incomingEvent = IncomingIntentEvent(++incomingSeq, intent)
     }
 }
 
@@ -252,12 +255,13 @@ private fun EditorHostScreen(
     prefs: android.content.SharedPreferences,
     prefsState: EditorPrefs,
     onUpdatePrefs: (EditorPrefs) -> Unit,
-    incomingIntent: Intent?,
-    onConsumeIntent: () -> Unit,
+    incomingEvent: IncomingIntentEvent<Intent>?,
+    onConsumeIntent: (Long) -> Unit,
 ) {
     val s = LocalJotStrings.current
     val isDark = prefsState.themePreset.isDark
     val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val tabManager = remember { TabManager(initialTitle = "typora-ref.md", initialKey = ASSET_REF_KEY) }
     val draftRepo = remember(context) { DraftRepository(context.filesDir.toPath().resolve("drafts")) }
     val activeTab = tabManager.activeTab
@@ -574,45 +578,48 @@ private fun EditorHostScreen(
         }
     }
 
-    LaunchedEffect(incomingIntent) {
-        val intent = incomingIntent ?: return@LaunchedEffect
-        onConsumeIntent()
-        val action = withContext(Dispatchers.IO) {
-            extractIncomingAction(intent, context.contentResolver)
-        } ?: return@LaunchedEffect
-        when (action) {
-            is IncomingAction.OpenMarkdownUri -> {
-                runCatching {
-                    context.contentResolver.takePersistableUriPermission(
-                        action.uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                    )
+    LaunchedEffect(incomingEvent) {
+        val event = incomingEvent ?: return@LaunchedEffect
+        try {
+            val action = withContext(Dispatchers.IO) {
+                extractIncomingAction(event.payload, context.contentResolver)
+            } ?: return@LaunchedEffect
+            when (action) {
+                is IncomingAction.OpenMarkdownUri -> {
+                    runCatching {
+                        context.contentResolver.takePersistableUriPermission(
+                            action.uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        )
+                    }
+                    openUri(action.uri)
                 }
-                openUri(action.uri)
+                is IncomingAction.ImportUri -> {
+                    val imported = withContext(Dispatchers.IO) {
+                        val bytes = runCatching {
+                            context.contentResolver.openInputStream(action.uri)?.use { it.readBytes() }
+                        }.getOrNull() ?: return@withContext null
+                        importDocumentBytes(action.suggestedName, bytes)
+                    }
+                    if (imported == null) {
+                        notice = s.importError
+                    } else if (flushTab(tabManager.activeTab)) {
+                        val mdTitle = suggestedMarkdownTitle(action.suggestedName)
+                        val created = tabManager.openOrFocus(key = null, title = mdTitle, text = imported)
+                        created.editorState.applyPreferences(prefsState)
+                        notice = "${s.importedNotice}: $mdTitle"
+                    }
+                }
+                is IncomingAction.SharedText -> {
+                    if (flushTab(tabManager.activeTab)) {
+                        val created = tabManager.openOrFocus(key = null, title = action.title, text = action.text)
+                        created.editorState.applyPreferences(prefsState)
+                        notice = null
+                    }
+                }
             }
-            is IncomingAction.ImportUri -> {
-                val imported = withContext(Dispatchers.IO) {
-                    val bytes = runCatching {
-                        context.contentResolver.openInputStream(action.uri)?.use { it.readBytes() }
-                    }.getOrNull() ?: return@withContext null
-                    importDocumentBytes(action.suggestedName, bytes)
-                }
-                if (imported == null) {
-                    notice = s.importError
-                } else if (flushTab(tabManager.activeTab)) {
-                    val mdTitle = suggestedMarkdownTitle(action.suggestedName)
-                    val created = tabManager.openOrFocus(key = null, title = mdTitle, text = imported)
-                    created.editorState.applyPreferences(prefsState)
-                    notice = "${s.importedNotice}: $mdTitle"
-                }
-            }
-            is IncomingAction.SharedText -> {
-                if (flushTab(tabManager.activeTab)) {
-                    val created = tabManager.openOrFocus(key = null, title = action.title, text = action.text)
-                    created.editorState.applyPreferences(prefsState)
-                    notice = null
-                }
-            }
+        } finally {
+            onConsumeIntent(event.seq)
         }
     }
 
@@ -743,6 +750,7 @@ private fun EditorHostScreen(
             uri.startsWith(TAG_URI) -> {
                 query = "#" + uri.removePrefix(TAG_URI)
                 drawerTab = DrawerTab.FILES
+                keyboardController?.hide()
                 scope.launch { drawerState.open() }
             }
             uri.startsWith(FOOTNOTE_URI) -> {
@@ -771,6 +779,7 @@ private fun EditorHostScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(
+                modifier = Modifier.imePadding(),
                 drawerContainerColor = MdTokens.sidebarBackground,
                 drawerContentColor = MdTokens.text,
             ) {
@@ -1011,7 +1020,10 @@ private fun EditorHostScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextButton(
-                        onClick = { scope.launch { drawerState.open() } },
+                        onClick = {
+                            keyboardController?.hide()
+                            scope.launch { drawerState.open() }
+                        },
                         contentPadding = PaddingValues(horizontal = 8.dp),
                     ) { Text(s.folder) }
                     Row(

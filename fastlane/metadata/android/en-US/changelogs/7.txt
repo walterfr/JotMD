@@ -1,0 +1,3 @@
+- Fix external VIEW/EDIT/SEND intents not opening when launched or delivered to a running JotMD instance
+- Hide the soft keyboard and apply IME padding when opening the sidebar drawer so word count remains visible
+- Add phone screenshots for store listings

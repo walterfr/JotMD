@@ -59,4 +59,25 @@ class ExternalIntentsTest {
         assertEquals(IncomingKind.UNKNOWN, classifyIncomingMimeOrName(null, "sem_extensao"))
         assertEquals(IncomingKind.UNKNOWN, classifyIncomingMimeOrName(null, null))
     }
+
+    @Test fun sharedTextActionUsesSanitizedSubjectOrDefaultTitle() {
+        assertEquals(
+            IncomingAction.SharedText("Teste Externo.md", "conteudo"),
+            sharedTextAction("Teste Externo", "conteudo"),
+        )
+        assertEquals(
+            IncomingAction.SharedText("Sem Título.md", "conteudo"),
+            sharedTextAction("   ", "conteudo"),
+        )
+        assertEquals(null, sharedTextAction("Titulo", ""))
+        assertEquals(null, sharedTextAction("Titulo", null))
+    }
+
+    @Test fun consumeIncomingEventOnlyClearsMatchingSeq() {
+        val first = IncomingIntentEvent(seq = 1L, payload = "intent-1")
+        val newer = IncomingIntentEvent(seq = 2L, payload = "intent-2")
+        assertEquals(null, consumeIncomingEvent(first, handledSeq = 1L))
+        assertEquals(newer, consumeIncomingEvent(newer, handledSeq = 1L))
+        assertEquals(null, consumeIncomingEvent<String>(null, handledSeq = 1L))
+    }
 }
