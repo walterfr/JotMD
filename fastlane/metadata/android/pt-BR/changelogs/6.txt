@@ -1,0 +1,5 @@
+- Preferencias persistidas: tema, tamanho da fonte (12-24 sp), largura da coluna (600-1200 dp), autopareamento, indentacao, idioma EN/PT-BR e restauracao de sessao
+- Importacao nativa de arquivos HTML, DOCX e EPUB para Markdown
+- Gravacao atomica de arquivos e recuperacao automatica de rascunhos
+- Abertura direta de .md/.txt por outros apps Android (Visualizar/Editar/Compartilhar)
+- Foco preservado ao alternar Codigo-fonte (</>) e melhorias visuais inspiradas no Typora

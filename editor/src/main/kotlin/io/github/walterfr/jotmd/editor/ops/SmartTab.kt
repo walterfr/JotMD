@@ -14,7 +14,7 @@ package io.github.walterfr.jotmd.editor.ops
  */
 data class SmartTab(val text: String, val selectionStart: Int, val selectionEnd: Int = selectionStart)
 
-private const val TAB_SPACES = "  "
+private const val DEFAULT_INDENT_SIZE = 2
 
 private val TAB_TASK = Regex("""^([^\S\r\n]*)([-*+] \[[ xX]] )""")
 private val TAB_BULLET = Regex("""^([^\S\r\n]*)([-*+] )""")
@@ -29,7 +29,11 @@ fun smartTab(
     selectionStart: Int,
     selectionEnd: Int = selectionStart,
     shift: Boolean = false,
+    indentSize: Int = DEFAULT_INDENT_SIZE,
 ): SmartTab? {
+    val unit = indentSize.coerceIn(2, 8)
+    val spaces = " ".repeat(unit)
+
     val selStart = minOf(selectionStart, selectionEnd).coerceIn(0, text.length)
     val selEnd = maxOf(selectionStart, selectionEnd).coerceIn(0, text.length)
 
@@ -42,19 +46,19 @@ fun smartTab(
     val lines = slice.split('\n')
 
     if (!shift && selStart == selEnd && lines.size == 1 && !isListOrQuote(lines[0])) {
-        val updated = text.substring(0, selStart) + TAB_SPACES + text.substring(selStart)
-        return SmartTab(updated, selStart + TAB_SPACES.length)
+        val updated = text.substring(0, selStart) + spaces + text.substring(selStart)
+        return SmartTab(updated, selStart + spaces.length)
     }
 
     var changed = false
     var deltaStart = 0
     var deltaEnd = 0
     var lineOffset = startLineStart
-    val rebuilt = StringBuilder(slice.length + lines.size * 2)
+    val rebuilt = StringBuilder(slice.length + lines.size * unit)
 
     lines.forEachIndexed { i, line ->
         if (i > 0) rebuilt.append('\n')
-        val edit = computeLineEdit(line, shift)
+        val edit = computeLineEdit(line, shift, spaces, unit)
         if (edit == null) {
             rebuilt.append(line)
         } else {
@@ -87,7 +91,7 @@ private fun isListOrQuote(line: String): Boolean =
         TAB_BULLET.containsMatchIn(line) ||
         TAB_ORDERED.containsMatchIn(line)
 
-private fun computeLineEdit(line: String, shift: Boolean): LineEdit? {
+private fun computeLineEdit(line: String, shift: Boolean, spaces: String, unit: Int): LineEdit? {
     TAB_QUOTE.find(line)?.let { m ->
         if (!shift) {
             val indentLen = m.groupValues[1].length
@@ -100,19 +104,25 @@ private fun computeLineEdit(line: String, shift: Boolean): LineEdit? {
 
     val listMatch = TAB_TASK.find(line) ?: TAB_BULLET.find(line) ?: TAB_ORDERED.find(line)
     if (listMatch != null) {
-        if (!shift) return LineEdit(0, 0, TAB_SPACES)
+        if (!shift) return LineEdit(0, 0, spaces)
         val indent = listMatch.groupValues[1]
         return when {
             indent.startsWith('\t') -> LineEdit(0, 1, "")
-            indent.startsWith(' ') -> LineEdit(0, if (indent.startsWith(TAB_SPACES)) 2 else 1, "")
+            indent.startsWith(' ') -> {
+                val removeCount = indent.takeWhile { it == ' ' }.length.coerceAtMost(unit)
+                LineEdit(0, removeCount, "")
+            }
             else -> LineEdit(0, listMatch.value.length, "")
         }
     }
 
-    if (!shift) return LineEdit(0, 0, TAB_SPACES)
+    if (!shift) return LineEdit(0, 0, spaces)
     return when {
         line.startsWith('\t') -> LineEdit(0, 1, "")
-        line.startsWith(' ') -> LineEdit(0, if (line.startsWith(TAB_SPACES)) 2 else 1, "")
+        line.startsWith(' ') -> {
+            val removeCount = line.takeWhile { it == ' ' }.length.coerceAtMost(unit)
+            LineEdit(0, removeCount, "")
+        }
         else -> null
     }
 }

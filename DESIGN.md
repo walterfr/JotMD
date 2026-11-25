@@ -280,3 +280,30 @@ Implementado no JotMD em `:core-md` (`Alerts.kt`, `alertOf`) e `editor/BlockRend
 
 - **Paridade implementada e verificada em JVM (✅):** invariante de roundtrip + BOM UTF-8; blocos core + GitHub Alerts + Front Matter + `==highlight==` + `<u>` + wikilinks/tags; `DocOutline` + `[TOC]` no editor, HTML e PDF (`DocOutline.kt`, `HtmlExport.kt`, `PdfExport.kt`, `BlockRenderer.kt`); `DocStats` CJK-aware a `382 WPM` (`DocStats.kt`); `DocRefs` (links por referência `[ref]:` e notas de rodapé `[^id]` clicáveis com salto no Android/Desktop/HTML/PDF); `MathRender` (`$...$` / `$$...$$` Unicode + fallback ASCII seguro em PDF); `SyntaxHighlight` (cercas + modo código-fonte com `VisualTransformation` 1:1); ops inteligentes (`SmartEnter`, `SmartBackspace`, `SmartTab`, `SmartPair`, `SmartDelete`, `TableOps` com inserção `3x4`/`Ctrl+T` e reordenação de linhas/colunas, `SourceGutter`) com guarda IME stale echo; busca/substituição com `Aa`, `[ab]`, regex `.*`, substituição unitária e destaque visual de ocorrências/ativa no editor; `HtmlToMarkdown` + colagem rica (`Ctrl+Shift+V`/`Colar+` com PNG em `typora-user-images/` no Desktop); CRUD de notas/pastas no Android SAF (`FileBrowser.kt`) e Windows (`DesktopWorkspace.kt`) + `DirectoryTreeWatcher` + Quick Open `Ctrl+P` (`420dp`); 5 presets de tema (`GitHub`, `Newsprint`, `Pixyll`, `Whitey`, `Night`); coluna centralizada `860dp`/`800dp`, Focus/Typewriter Mode e rodapé Desktop `30dp`; multi-abas (`"Sem Título"`) + autosave.
 - **Diferenças deliberadas ou itens menores (🟡/❌):** foco por bloco (decisão deliberada do JotMD) vs por span; rendering LaTeX Unicode nativo sem WebView/MathJax; menus flutuantes móveis de célula (drag-and-drop visual com mouse no meio da tabela) substituídos por controles diretos por toque/atalho.
+
+### 6. Levantamento de Interface Typora (v1.13.7) — Chrome, Preferências, i18n, Importação e Recuperação
+
+Extraído de `C:\Program Files\Typora\resources` (`window.html`, `style/window.css`, `style/base-control.css`, `style/megamenu.css`, `page-dist/static/js/Preferences.962926a4.f23e7160.js` e `locales/pt-BR.lproj/{Front,Menu,Panel}.json`):
+
+- **Sidebar (`#typora-sidebar`, `--side-bar-bg-color`):** largura padrão `270px` (`--sidebar-width`), fundo `#fafafa` (claro, `window.css`) / `#2E3033` (escuro, `night.css`), borda direita `1px solid rgba(0,0,0,.07)`. Cabeçalho com abas `#info-panel-tab-file` (`Arquivos`) e `#info-panel-tab-outline` (`Índices`), destaque na aba ativa com `font-weight: 700` e `.info-panel-tab-border` (`height: 4px; background-color: currentColor`). Item ativo na lista usa `--active-file-bg-color` (`#eee` claro / `#222222` escuro), `--active-file-text-color` (`inherit` / `#ffffff`) e borda de acento lateral `--active-file-border-color` (`#777` / `#8d8df0`). Barra de pesquisa integrada `#file-library-search-panel` com `#file-library-search-input` (borda de foco `var(--primary-color)`) e botões de filtro `.searchpanel-search-option-btn`.
+- **Rodapé e Popover de Contagem de Palavras (`footer.ty-footer` / `#footer-word-count-info`):** altura compacta (`28px` base e `30px` efetivo, `font-size: 12px`, `border-top: 1px solid #ddd`), toggle esquerdo `#outline-btn` (sidebar) e `#toggle-sourceview-btn` (`</>`), e popover direito `#footer-word-count-info` (`bottom: 32px; right: 4px`) exibindo tabela `.ty-footer-word-count-all` em 4 linhas (`Minutos` / `Minutes`, `Linhas` / `Lines`, `Palavras` / `Words`, `Caracteres` / `Characters`), além da seção `.footer-word-count-selection` (`In Selection`: `Words`, `Characters`) quando há texto selecionado.
+- **Painel de Preferências (`page-dist/static/js/Preferences.*.js`):** abas `Files`, `Editor`, `Image`, `Markdown`, `Export`, `Appearance` e `General`, destacando:
+  - **Aparência (`Appearance`):** seletor `Themes`, `Font Size` (`useCustomFontSize` / `customFontSize`), `Zoom` (`zoomFactor`) e controle visual alinhado à largura de escrita do tema.
+  - **Editor (`Editor`):** `Indent Size on Save` (`indentSize`: `Auto`, `2`–`5`, `Tab`), `Auto Pair` (`no_pairing_match` para colchetes/aspas e extensão Markdown) e `Typewriter Mode`.
+  - **Geral (`General`):** `Language` (`userLanguage`: `""` Sistema / `pt-BR` / `Base` Inglês etc.), `Auto Save` (`enableAutoSave`) e ação `Recover Unsaved Drafts` (`openUnsavedDraft`).
+- **Terminologia PT-BR/EN (`locales/pt-BR.lproj/{Front,Menu,Panel}.json`):** termos oficiais espelhados na camada compartilhada `JotStrings`:
+
+| PT-BR | EN | Origem `.lproj` |
+|---|---|---|
+| `Arquivos` | `Files` | `Front.json` / `Panel.json` |
+| `Índices` | `Outline` | `Front.json` / `Menu.json` |
+| `Preferências` | `Preferences` | `Menu.json` / `Panel.json` |
+| `Aparência` | `Appearance` | `Panel.json` |
+| `Sem Título` | `Untitled` | `Front.json` |
+| `Contagem de Palavras` | `Word Count` | `Panel.json` |
+| `Modo Foco` | `Focus Mode` | `Menu.json` |
+| `Modo Máquina de Escrever` | `Typewriter Mode` | `Menu.json` / `Panel.json` |
+| `Modo Código Fonte` | `Source Code Mode` | `Menu.json` |
+| `Recuperar Rascunhos Não Salvos` | `Recover Unsaved Drafts` | `Panel.json` |
+
+- **Importação (`Import...`) & Recuperação (`Recover Unsaved Drafts`):** `#m-import-local` (`window.html` / `megamenu.css`) oferece importação de HTML/DOCX/EPUB (entre outros formatos como `rst`/`org`) convertidos em Markdown local; a persistência combina escrita atômica (`.<dir>/.~<basename>` + `fsync`) com rascunhos recuperáveis (`draftsRecover/` / `Recover Unsaved Drafts`) para notas sem arquivo salvo.

@@ -65,6 +65,10 @@ class EditorState(initialText: String = "") {
     private var staleEchoUntilMs: Long = 0L
 
     var autoPairEnabled: Boolean = true
+    var indentSize: Int = 2
+        set(value) {
+            field = value.coerceIn(2, 8)
+        }
     var isSourceMode: Boolean by mutableStateOf(false)
     var isFocusMode: Boolean by mutableStateOf(false)
         private set
@@ -92,6 +96,12 @@ class EditorState(initialText: String = "") {
         private set
     var editValue: TextFieldValue by mutableStateOf(TextFieldValue(""))
         private set
+
+    fun applyPreferences(prefs: EditorPrefs) {
+        val normalized = prefs.normalized()
+        autoPairEnabled = normalized.autoPairEnabled
+        indentSize = normalized.indentSize
+    }
 
     fun toggleSourceMode() {
         isSourceMode = !isSourceMode
@@ -427,12 +437,15 @@ class EditorState(initialText: String = "") {
     }
 
     /** Indentação/desindentação com `Tab` / `Shift+Tab` no bloco focado. */
+    fun tab(shift: Boolean = false): Boolean = tabAtCursor(shift)
+
+    /** Indentação/desindentação com `Tab` / `Shift+Tab` no bloco focado. */
     fun tabAtCursor(shift: Boolean = false): Boolean {
         val id = focusedId ?: return false
         val index = doc.blocks.indexOfFirst { it.id == id }
         if (index < 0) return false
 
-        val r = smartTab(editValue.text, editValue.selection.start, editValue.selection.end, shift)
+        val r = smartTab(editValue.text, editValue.selection.start, editValue.selection.end, shift, indentSize = indentSize)
             ?: return false
         recordUndoCheckpoint()
         val block = doc.blocks[index]

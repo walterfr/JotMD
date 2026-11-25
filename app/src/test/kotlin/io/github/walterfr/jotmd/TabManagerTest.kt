@@ -173,4 +173,32 @@ class TabManagerTest {
         tm.replaceSession(blank.id, session = null, title = "renomeada.md")
         assertEquals("renomeada.md", tm.activeTab.title)
     }
+
+    @Test
+    fun `openOrFocus, newEmptyTab e updateDraftId preservam e atualizam draftId`() {
+        val tm = TabManager(initialTitle = "a.md", initialText = "a\n", initialKey = "k1")
+        assertNull(tm.activeTab.draftId)
+
+        val recovered = tm.openOrFocus(
+            key = null,
+            title = "Rascunho.md",
+            text = "conteudo",
+            draftId = "draft-1",
+        )
+        assertEquals("draft-1", recovered.draftId)
+
+        val blank = tm.newEmptyTab(title = "Untitled", text = "abc", draftId = "draft-2")
+        assertEquals("draft-2", blank.draftId)
+        assertEquals("Untitled", blank.title)
+
+        tm.updateDraftId(blank.id, "draft-2-updated")
+        assertEquals("draft-2-updated", tm.tabs.first { it.id == blank.id }.draftId)
+
+        tm.updateDraftId(blank.id, null)
+        assertNull(tm.tabs.first { it.id == blank.id }.draftId)
+
+        // ID inexistente não gera exceção nem altera abas existentes.
+        tm.updateDraftId(9999L, "ignored")
+        assertEquals("draft-1", tm.tabs.first { it.id == recovered.id }.draftId)
+    }
 }

@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -23,7 +24,7 @@ dependencies {
 }
 
 val desktopPackageVersionRaw = (findProperty("desktopPackageVersion") as String?)?.trim().orEmpty()
-val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.3.2"
+val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.4.0"
 
 compose.desktop {
     application {
@@ -36,6 +37,13 @@ compose.desktop {
                 iconFile.set(project.file("src/main/resources/jotmd.ico"))
             }
         }
+    }
+}
+
+tasks.withType<AbstractJPackageTask>().configureEach {
+    if (targetFormat != TargetFormat.AppImage) {
+        freeArgs.add("--file-associations")
+        freeArgs.add(project.file("packaging/markdown-association.properties").absolutePath)
     }
 }
 

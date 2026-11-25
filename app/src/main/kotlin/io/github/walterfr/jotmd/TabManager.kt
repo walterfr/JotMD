@@ -22,6 +22,7 @@ data class EditorTab(
     val editorState: EditorState,
     val session: FileSession? = null,
     val saveFailed: Boolean = false,
+    val draftId: String? = null,
 )
 
 /**
@@ -61,6 +62,7 @@ class TabManager(
         title: String,
         text: String,
         session: FileSession? = null,
+        draftId: String? = null,
     ): EditorTab {
         if (key != null) {
             val idx = _tabs.indexOfFirst { it.key == key }
@@ -84,14 +86,19 @@ class TabManager(
             title = title,
             editorState = EditorState(text),
             session = session,
+            draftId = draftId,
         )
         _tabs.add(created)
         activeTabId = created.id
         return created
     }
 
-    fun newEmptyTab(title: String = "Sem Título", text: String = ""): EditorTab =
-        openOrFocus(key = null, title = title, text = text, session = null)
+    fun newEmptyTab(
+        title: String = "Sem Título",
+        text: String = "",
+        draftId: String? = null,
+    ): EditorTab =
+        openOrFocus(key = null, title = title, text = text, session = null, draftId = draftId)
 
     fun select(id: Long) {
         if (_tabs.any { it.id == id }) {
@@ -105,6 +112,15 @@ class TabManager(
         val current = _tabs[idx]
         if (current.saveFailed != saveFailed) {
             _tabs[idx] = current.copy(saveFailed = saveFailed)
+        }
+    }
+
+    fun updateDraftId(id: Long, draftId: String?) {
+        val idx = _tabs.indexOfFirst { it.id == id }
+        if (idx < 0) return
+        val current = _tabs[idx]
+        if (current.draftId != draftId) {
+            _tabs[idx] = current.copy(draftId = draftId)
         }
     }
 
@@ -122,9 +138,13 @@ class TabManager(
      * Fecha a aba [id] após consultar [onBeforeClose]. Se [onBeforeClose]
      * retornar `false`, marca `saveFailed = true` na aba e mantém ela aberta
      * para não perder edições não gravadas. Ao fechar a última aba restante,
-     * abre uma aba vazia `"Sem Título"`.
+     * abre uma aba vazia com [emptyTitle].
      */
-    fun close(id: Long, onBeforeClose: (EditorTab) -> Boolean = { true }): Boolean {
+    fun close(
+        id: Long,
+        emptyTitle: String = "Sem Título",
+        onBeforeClose: (EditorTab) -> Boolean = { true },
+    ): Boolean {
         val idx = _tabs.indexOfFirst { it.id == id }
         if (idx < 0) return false
         val tab = _tabs[idx]
@@ -135,7 +155,7 @@ class TabManager(
         val wasActive = tab.id == activeTabId
         _tabs.removeAt(idx)
         if (_tabs.isEmpty()) {
-            newEmptyTab()
+            newEmptyTab(title = emptyTitle)
         } else if (wasActive) {
             activeTabId = _tabs[idx.coerceAtMost(_tabs.lastIndex)].id
         }

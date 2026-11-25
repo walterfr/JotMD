@@ -1,0 +1,6 @@
+- Persisted preferences: theme, font size (12-24 sp), column width (600-1200 dp), auto-pair, indent size, EN/PT-BR UI language, and session restore
+- Native Kotlin HTML, DOCX, and EPUB import into Markdown
+- Atomic file writes and crash/draft recovery store
+- Open .md/.txt files directly from Android external intents (View/Edit/Share)
+- Preserve cursor and block focus when toggling Source Mode (</>)
+- Typora-inspired sidebar styling, Word Count details dialog, and overflow menu

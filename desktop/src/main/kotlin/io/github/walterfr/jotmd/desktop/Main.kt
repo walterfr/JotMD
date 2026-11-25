@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,16 +21,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -82,13 +88,25 @@ import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
 import io.github.walterfr.jotmd.core.isValidSearchRegex
 import io.github.walterfr.jotmd.core.outlineOf
+import io.github.walterfr.jotmd.core.writeTextAtomic
+import io.github.walterfr.jotmd.editor.AppLanguage
+import io.github.walterfr.jotmd.editor.DarkMdPalette
+import io.github.walterfr.jotmd.editor.EditorPrefs
 import io.github.walterfr.jotmd.editor.EditorScreen
 import io.github.walterfr.jotmd.editor.EditorState
 import io.github.walterfr.jotmd.editor.FOOTNOTE_URI
+import io.github.walterfr.jotmd.editor.JotStrings
+import io.github.walterfr.jotmd.editor.LightMdPalette
+import io.github.walterfr.jotmd.editor.LocalJotStrings
+import io.github.walterfr.jotmd.editor.MdPalette
 import io.github.walterfr.jotmd.editor.MdThemePreset
 import io.github.walterfr.jotmd.editor.MdTokens
+import io.github.walterfr.jotmd.editor.NewsprintMdPalette
+import io.github.walterfr.jotmd.editor.PixyllMdPalette
 import io.github.walterfr.jotmd.editor.TAG_URI
 import io.github.walterfr.jotmd.editor.WIKI_URI
+import io.github.walterfr.jotmd.editor.WhiteyMdPalette
+import io.github.walterfr.jotmd.editor.stringsFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -104,8 +122,10 @@ import java.nio.file.Path
 import javax.swing.JFileChooser
 import javax.swing.SwingUtilities
 import javax.swing.UIManager
+import javax.swing.filechooser.FileNameExtensionFilter
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlin.math.roundToInt
 import org.jetbrains.skia.Image as SkiaImage
 
 private const val AUTOSAVE_DELAY_MS = 1000L
@@ -119,12 +139,69 @@ private sealed interface TreeDialogState {
     data class Delete(val entry: DesktopDocEntry) : TreeDialogState
 }
 
-fun main() = application {
-    val tabManager = remember {
-        DesktopTabManager().apply {
-            openInitial("typora-ref.md", loadBundledReferenceDoc())
-        }
+private fun isMarkdownOrTextArg(path: Path): Boolean {
+    val ext = path.fileName?.toString()?.substringAfterLast('.', "")?.lowercase().orEmpty()
+    return ext in setOf("md", "markdown", "mmd", "txt")
+}
+
+private fun isImportableDocArg(path: Path): Boolean {
+    val ext = path.fileName?.toString()?.substringAfterLast('.', "")?.lowercase().orEmpty()
+    return ext in setOf("html", "htm", "xhtml", "docx", "epub")
+}
+
+fun main(args: Array<String>) = application {
+    val configStore = remember { DesktopConfigStore() }
+    val initialSession = remember { configStore.load() }
+    var prefsState by remember { mutableStateOf(initialSession.prefs) }
+    remember(prefsState) {
+        MdTokens.applyPreferences(prefsState)
+        true
     }
+
+    val bundledRefText = remember { loadBundledReferenceDoc() }
+    val startupState = remember {
+        val mgr = DesktopTabManager()
+        var initialRootDir: Path? = null
+        var initialRefTabId: Long? = null
+        val startupPaths = resolveStartupPaths(args)
+
+        if (startupPaths.isNotEmpty()) {
+            for (p in startupPaths) {
+                when {
+                    Files.isDirectory(p) -> if (initialRootDir == null) initialRootDir = p
+                    isMarkdownOrTextArg(p) -> mgr.openOrFocus(p)
+                    isImportableDocArg(p) -> {
+                        importDesktopFile(p)?.let { (title, md) ->
+                            val draftId = "import-${System.currentTimeMillis()}-${mgr.tabs.size}"
+                            mgr.openInitial(title, md, draftId = draftId)
+                        }
+                    }
+                }
+            }
+        } else if (initialSession.prefs.restoreSession) {
+            initialRootDir = initialSession.lastRootDir?.takeIf { Files.isDirectory(it) }
+            for (p in initialSession.openFiles) {
+                if (Files.isRegularFile(p)) {
+                    mgr.openOrFocus(p)
+                }
+            }
+            for (draft in configStore.drafts.loadDrafts()) {
+                mgr.openDraft(draft)
+            }
+        }
+
+        if (mgr.tabs.isEmpty()) {
+            val refTab = mgr.openInitial("typora-ref.md", bundledRefText)
+            initialRefTabId = refTab.id
+        }
+        mgr.tabs.forEach { it.editorState.applyPreferences(initialSession.prefs) }
+        Triple(mgr, initialRootDir, initialRefTabId)
+    }
+
+    val tabManager = startupState.first
+    var rootDir by remember { mutableStateOf(startupState.second) }
+    val initialRefTabId = startupState.third
+
     val scope = rememberCoroutineScope()
     var saveAction by remember { mutableStateOf<() -> Unit>({}) }
     var findAction by remember { mutableStateOf<() -> Unit>({}) }
@@ -132,17 +209,62 @@ fun main() = application {
     var insertTableAction by remember { mutableStateOf<() -> Unit>({}) }
     var richPasteAction by remember { mutableStateOf<() -> Unit>({}) }
     var escapeAction by remember { mutableStateOf<() -> Boolean>({ false }) }
-    var themePreset by remember { mutableStateOf(MdTokens.themePreset) }
-    val isDark = themePreset.isDark
+
+    val strings = remember(prefsState.language) { stringsFor(prefsState.language) }
+    val isDark = prefsState.themePreset.isDark
     val active = tabManager.activeTab
     val dirtyMark = if (active?.isDirty == true) "*" else ""
+
+    fun isUnmodifiedInitialRef(tab: DesktopTab): Boolean =
+        tab.id == initialRefTabId && tab.draftId == null && tab.editorState.text() == bundledRefText
+
+    fun persistTabDraft(tab: DesktopTab) {
+        if (tab.file != null) return
+        val content = tab.editorState.text()
+        if (isUnmodifiedInitialRef(tab) || content.isBlank()) {
+            tab.draftId?.let { id -> configStore.drafts.deleteDraft(id) }
+            return
+        }
+        val id = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also { tab.draftId = it }
+        configStore.drafts.saveDraft(id, tab.title, content)
+    }
+
+    fun persistSessionSnapshot() {
+        configStore.save(
+            DesktopSessionState(
+                prefs = prefsState,
+                lastRootDir = rootDir,
+                openFiles = tabManager.tabs.mapNotNull { it.file },
+            ),
+        )
+    }
+
+    LaunchedEffect(prefsState, tabManager.tabs) {
+        tabManager.tabs.forEach { it.editorState.applyPreferences(prefsState) }
+    }
+
+    var sessionInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(prefsState, rootDir) {
+        if (!sessionInitialized) {
+            sessionInitialized = true
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) { persistSessionSnapshot() }
+    }
 
     Window(
         onCloseRequest = {
             tabManager.saveAll()
+            if (prefsState.restoreSession) {
+                for (tab in tabManager.tabs) {
+                    persistTabDraft(tab)
+                }
+                configStore.drafts.pruneOldDrafts()
+            }
+            persistSessionSnapshot()
             exitApplication()
         },
-        title = "JotMD — $dirtyMark${active?.title ?: "Sem Título"}",
+        title = "JotMD — $dirtyMark${active?.title ?: strings.untitled}",
         icon = remember { loadWindowIcon() },
         state = rememberWindowState(width = 1120.dp, height = 760.dp),
         onPreviewKeyEvent = { event ->
@@ -158,20 +280,36 @@ fun main() = application {
             )
         },
     ) {
-        MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
-            DesktopShell(
-                ownerWindow = window,
-                tabManager = tabManager,
-                themePreset = themePreset,
-                onCycleTheme = { themePreset = MdTokens.cycleThemePreset() },
-                onRegisterSave = { saveAction = it },
-                onRegisterFind = { findAction = it },
-                onRegisterQuickOpen = { quickOpenAction = it },
-                onRegisterInsertTable = { insertTableAction = it },
-                onRegisterRichPaste = { richPasteAction = it },
-                onRegisterEscape = { escapeAction = it },
-                onLaunch = { block -> scope.launch { block() } },
-            )
+        CompositionLocalProvider(LocalJotStrings provides strings) {
+            MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
+                DesktopShell(
+                    ownerWindow = window,
+                    tabManager = tabManager,
+                    configStore = configStore,
+                    prefs = prefsState,
+                    onPrefsChange = { updated ->
+                        val normalized = updated.normalized()
+                        prefsState = normalized
+                        MdTokens.applyPreferences(normalized)
+                        tabManager.tabs.forEach { it.editorState.applyPreferences(normalized) }
+                    },
+                    rootDir = rootDir,
+                    onRootDirChange = { rootDir = it },
+                    onPersistDraft = ::persistTabDraft,
+                    onPersistSession = ::persistSessionSnapshot,
+                    onCycleTheme = {
+                        val next = MdTokens.cycleThemePreset()
+                        prefsState = prefsState.copy(themePreset = next)
+                    },
+                    onRegisterSave = { saveAction = it },
+                    onRegisterFind = { findAction = it },
+                    onRegisterQuickOpen = { quickOpenAction = it },
+                    onRegisterInsertTable = { insertTableAction = it },
+                    onRegisterRichPaste = { richPasteAction = it },
+                    onRegisterEscape = { escapeAction = it },
+                    onLaunch = { block -> scope.launch { block() } },
+                )
+            }
         }
     }
 }
@@ -221,7 +359,13 @@ private fun handleWindowShortcut(
 private fun DesktopShell(
     ownerWindow: Frame,
     tabManager: DesktopTabManager,
-    themePreset: MdThemePreset,
+    configStore: DesktopConfigStore,
+    prefs: EditorPrefs,
+    onPrefsChange: (EditorPrefs) -> Unit,
+    rootDir: Path?,
+    onRootDirChange: (Path?) -> Unit,
+    onPersistDraft: (DesktopTab) -> Unit,
+    onPersistSession: () -> Unit,
     onCycleTheme: () -> Unit,
     onRegisterSave: (() -> Unit) -> Unit,
     onRegisterFind: (() -> Unit) -> Unit,
@@ -231,8 +375,9 @@ private fun DesktopShell(
     onRegisterEscape: (() -> Boolean) -> Unit,
     onLaunch: (suspend () -> Unit) -> Unit,
 ) {
+    val s = LocalJotStrings.current
+    val themePreset = prefs.themePreset
     val isDark = themePreset.isDark
-    var rootDir by remember { mutableStateOf<Path?>(null) }
     var entries by remember { mutableStateOf<List<DesktopDocEntry>>(emptyList()) }
     var sidebarOpen by remember { mutableStateOf(true) }
     var sidebarTab by remember { mutableStateOf(SidebarTab.FILES) }
@@ -250,6 +395,8 @@ private fun DesktopShell(
     var matchCursor by remember { mutableStateOf(0) }
     var showQuickOpen by remember { mutableStateOf(false) }
     var quickOpenQuery by remember { mutableStateOf("") }
+    var showWordCountModal by remember { mutableStateOf(false) }
+    var showPreferencesModal by remember { mutableStateOf(false) }
     var treeDialog by remember { mutableStateOf<TreeDialogState?>(null) }
     var dialogError by remember { mutableStateOf<String?>(null) }
     var dialogBusy by remember { mutableStateOf(false) }
@@ -322,9 +469,11 @@ private fun DesktopShell(
     fun openFile(path: Path) {
         val opened = tabManager.openOrFocus(path)
         if (opened == null) {
-            showNotice("Não foi possível abrir: ${path.fileName}", isError = true)
+            showNotice("${s.open}: ${path.fileName}", isError = true)
         } else {
+            opened.editorState.applyPreferences(prefs)
             showNotice(null)
+            onLaunch { withContext(Dispatchers.IO) { onPersistSession() } }
         }
     }
 
@@ -334,18 +483,27 @@ private fun DesktopShell(
             onLaunch {
                 val wrote = withContext(Dispatchers.IO) { saveTabIfChanged(tab) }
                 if (wrote) refreshNonce++
-                if (tab.saveFailed) showNotice("Erro ao salvar", isError = true) else showNotice(null)
+                if (tab.saveFailed) showNotice(s.saveError, isError = true) else showNotice(null)
             }
         } else {
             onLaunch {
-                val chosen = pickMarkdownFile(ownerWindow, FileDialog.SAVE, rootDir, tab.title)
+                val chosen = pickMarkdownFile(ownerWindow, FileDialog.SAVE, rootDir, s, tab.title)
                     ?: return@onLaunch
-                val ok = withContext(Dispatchers.IO) { tabManager.saveTabAs(tab, chosen) }
+                val oldDraftId = tab.draftId
+                val ok = withContext(Dispatchers.IO) {
+                    val saved = tabManager.saveTabAs(tab, chosen)
+                    if (saved && oldDraftId != null) {
+                        configStore.drafts.deleteDraft(oldDraftId)
+                        tab.draftId = null
+                    }
+                    saved
+                }
                 if (ok) {
                     refreshNonce++
                     showNotice(null)
+                    withContext(Dispatchers.IO) { onPersistSession() }
                 } else {
-                    showNotice("Erro ao salvar", isError = true)
+                    showNotice(s.saveError, isError = true)
                 }
             }
         }
@@ -375,7 +533,7 @@ private fun DesktopShell(
         if (applyToEditor(tab) { it.insertTable() }) {
             showNotice(null)
         } else {
-            showNotice("Não foi possível inserir tabela aqui", isError = true)
+            showNotice(s.tapBlockForTable, isError = true)
         }
     }
 
@@ -384,7 +542,7 @@ private fun DesktopShell(
         when (val payload = readClipboardPayload()) {
             is ClipboardPayload.Image -> {
                 if (tab.file == null && rootDir == null) {
-                    showNotice("Salve a nota ou abra uma pasta antes de colar imagens.", isError = true)
+                    showNotice(s.openFolderHint, isError = true)
                     return
                 }
                 onLaunch {
@@ -392,13 +550,13 @@ private fun DesktopShell(
                         saveClipboardImagePng(payload.image, tab.file, rootDir)
                     }
                     if (dest == null) {
-                        showNotice("Erro ao salvar imagem da área de transferência", isError = true)
+                        showNotice(s.saveError, isError = true)
                         return@onLaunch
                     }
-                    if (applyToEditor(tab) { it.insertImageMarkdown("imagem", dest) }) {
+                    if (applyToEditor(tab) { it.insertImageMarkdown("image", dest) }) {
                         showNotice(null)
                     } else {
-                        showNotice("Posicione o cursor em um bloco para colar a imagem", isError = true)
+                        showNotice(s.tapBlockToPaste, isError = true)
                     }
                 }
             }
@@ -406,18 +564,18 @@ private fun DesktopShell(
                 if (applyToEditor(tab) { it.pasteHtmlAtCursor(payload.html) }) {
                     showNotice(null)
                 } else {
-                    showNotice("Não foi possível colar HTML neste ponto", isError = true)
+                    showNotice(s.tapBlockToPaste, isError = true)
                 }
             }
             is ClipboardPayload.Text -> {
                 if (applyToEditor(tab) { it.pasteMarkdownAtCursor(payload.text) }) {
                     showNotice(null)
                 } else {
-                    showNotice("Não foi possível colar texto neste ponto", isError = true)
+                    showNotice(s.tapBlockToPaste, isError = true)
                 }
             }
             ClipboardPayload.Empty -> {
-                showNotice("Área de transferência vazia ou sem conteúdo compatível", isError = true)
+                showNotice(s.clipboardEmpty, isError = true)
             }
         }
     }
@@ -435,6 +593,14 @@ private fun DesktopShell(
     onRegisterRichPaste(::triggerRichPaste)
     onRegisterEscape {
         when {
+            showPreferencesModal -> {
+                showPreferencesModal = false
+                true
+            }
+            showWordCountModal -> {
+                showWordCountModal = false
+                true
+            }
             treeDialog != null -> {
                 if (!dialogBusy) {
                     treeDialog = null
@@ -464,13 +630,16 @@ private fun DesktopShell(
         onDispose { watcher?.close() }
     }
 
-    // Autosave de 1s após a última edição na aba ativa com arquivo associado.
+    // Autosave de 1s após a última edição na aba ativa (arquivo ou rascunho).
     LaunchedEffect(activeTab?.id, activeTab?.editorState?.doc) {
         val tab = activeTab ?: return@LaunchedEffect
-        if (tab.file == null) return@LaunchedEffect
         delay(AUTOSAVE_DELAY_MS)
-        val wrote = withContext(Dispatchers.IO) { saveTabIfChanged(tab) }
-        if (wrote) refreshNonce++
+        if (tab.file != null) {
+            val wrote = withContext(Dispatchers.IO) { saveTabIfChanged(tab) }
+            if (wrote) refreshNonce++
+        } else if (prefs.restoreSession) {
+            withContext(Dispatchers.IO) { onPersistDraft(tab) }
+        }
     }
 
     // Lista a pasta raiz ao trocar de diretório, abrir o painel ou salvar alterações.
@@ -501,7 +670,7 @@ private fun DesktopShell(
                 val match = resolveDesktopWikilink(target, entries)
                 when {
                     target.isEmpty() -> Unit
-                    rootDir == null || match == null -> showNotice("Nota não encontrada: $target", isError = true)
+                    rootDir == null || match == null -> showNotice(s.noteMissing(target), isError = true)
                     else -> openFile(match.path)
                 }
             }
@@ -515,7 +684,7 @@ private fun DesktopShell(
                 val tab = activeTab
                 val def = tab?.let { docRefsOf(it.editorState.doc).resolveFootnote(id) }
                 if (tab == null || def == null) {
-                    showNotice("Nota de rodapé não encontrada: $id", isError = true)
+                    showNotice("${s.footnoteNotFound}: $id", isError = true)
                 } else {
                     tab.editorState.focusBlockIndex(def.blockIndex)
                     onLaunch { listStates[tab.id]?.animateScrollToItem(def.blockIndex) }
@@ -545,8 +714,8 @@ private fun DesktopShell(
                     activeTab = activeTab,
                     onPickFolder = {
                         onLaunch {
-                            val chosen = pickDirectory(ownerWindow, rootDir) ?: return@onLaunch
-                            rootDir = chosen
+                            val chosen = pickDirectory(ownerWindow, rootDir, s.chooseFolder) ?: return@onLaunch
+                            onRootDirChange(chosen)
                             query = ""
                             showNotice(null)
                         }
@@ -590,12 +759,33 @@ private fun DesktopShell(
                     onToggleSidebar = { sidebarOpen = !sidebarOpen },
                     onOpenFile = {
                         onLaunch {
-                            val chosen = pickMarkdownFile(ownerWindow, FileDialog.LOAD, rootDir) ?: return@onLaunch
+                            val chosen = pickMarkdownFile(ownerWindow, FileDialog.LOAD, rootDir, s)
+                                ?: return@onLaunch
                             openFile(chosen)
                         }
                     },
+                    onImportFile = {
+                        onLaunch {
+                            val chosen = pickImportFile(ownerWindow, rootDir, s.importAction)
+                                ?: return@onLaunch
+                            val imported = withContext(Dispatchers.IO) { importDesktopFile(chosen) }
+                            if (imported == null) {
+                                showNotice(s.importError, isError = true)
+                            } else {
+                                val (title, md) = imported
+                                val draftId = "import-${System.currentTimeMillis()}-${tabManager.tabs.size}"
+                                val newTab = tabManager.openInitial(title, md, draftId = draftId)
+                                newTab.editorState.applyPreferences(prefs)
+                                if (prefs.restoreSession) {
+                                    withContext(Dispatchers.IO) { onPersistDraft(newTab) }
+                                }
+                                showNotice("${s.importedNotice}: $title")
+                            }
+                        }
+                    },
                     onNewTab = {
-                        tabManager.newEmptyTab()
+                        val newTab = tabManager.newEmptyTab(s.untitled)
+                        newTab.editorState.applyPreferences(prefs)
                         showNotice(null)
                     },
                     onSave = ::triggerSave,
@@ -607,7 +797,7 @@ private fun DesktopShell(
                         onLaunch {
                             val chosen = pickExportSaveFile(
                                 owner = ownerWindow,
-                                dialogTitle = "Exportar HTML",
+                                dialogTitle = "${s.html} — ${s.saveAs}",
                                 initialDir = rootDir,
                                 defaultTitle = tab.title,
                                 extensions = listOf(".html", ".htm"),
@@ -615,11 +805,11 @@ private fun DesktopShell(
                             val html = exportToHtml(tab.editorState.text(), tab.title, isDark)
                             val ok = runCatching {
                                 withContext(Dispatchers.IO) {
-                                    Files.writeString(chosen, html, StandardCharsets.UTF_8)
+                                    writeTextAtomic(chosen, html)
                                 }
                             }.isSuccess
                             showNotice(
-                                if (ok) "HTML exportado: ${chosen.fileName}" else "Erro ao exportar HTML",
+                                if (ok) "${s.htmlExported}: ${chosen.fileName}" else s.exportError,
                                 isError = !ok,
                             )
                         }
@@ -629,7 +819,7 @@ private fun DesktopShell(
                         onLaunch {
                             val chosen = pickExportSaveFile(
                                 owner = ownerWindow,
-                                dialogTitle = "Exportar PDF",
+                                dialogTitle = "${s.pdf} — ${s.saveAs}",
                                 initialDir = rootDir,
                                 defaultTitle = tab.title,
                                 extensions = listOf(".pdf"),
@@ -639,13 +829,14 @@ private fun DesktopShell(
                                 withContext(Dispatchers.IO) { Files.write(chosen, pdf) }
                             }.isSuccess
                             showNotice(
-                                if (ok) "PDF exportado: ${chosen.fileName}" else "Erro ao exportar PDF",
+                                if (ok) "${s.pdfExported}: ${chosen.fileName}" else s.exportError,
                                 isError = !ok,
                             )
                         }
                     },
                     onToggleSource = { activeTab?.editorState?.toggleSourceMode() },
                     onCycleTheme = onCycleTheme,
+                    onOpenPreferences = { showPreferencesModal = true },
                 )
                 if (showFindBar && activeTab != null) {
                     HorizontalDivider(color = MdTokens.tableBorder)
@@ -680,12 +871,12 @@ private fun DesktopShell(
                         onReplaceCurrent = {
                             val match = docMatches.getOrNull(matchCursor)
                             if (match != null && activeTab.editorState.replaceMatch(match, replaceQuery)) {
-                                showNotice("1 substituído", isError = false)
+                                showNotice(s.replacedCount(1), isError = false)
                             }
                         },
                         onReplaceAll = {
                             if (invalidRegex) {
-                                showNotice("Expressão regular inválida", isError = true)
+                                showNotice(s.invalidRegex, isError = true)
                             } else {
                                 val replaced = activeTab.editorState.replaceAll(
                                     query = findQuery,
@@ -694,7 +885,7 @@ private fun DesktopShell(
                                     wholeWord = wholeWord,
                                     regex = findRegex,
                                 )
-                                showNotice("$replaced substituído(s)", isError = false)
+                                showNotice(s.replacedCount(replaced), isError = false)
                             }
                         },
                         onClose = { showFindBar = false },
@@ -707,8 +898,21 @@ private fun DesktopShell(
                     activeTabId = activeTab?.id,
                     onSelect = { tabManager.select(it) },
                     onClose = { id ->
-                        val closed = tabManager.close(id)
-                        if (closed) listStates.remove(id) else showNotice("Erro ao salvar antes de fechar", isError = true)
+                        val closingDraftId = tabManager.tabs.firstOrNull { it.id == id }?.draftId
+                        val closed = tabManager.close(id, defaultEmptyTitle = s.untitled)
+                        if (closed) {
+                            listStates.remove(id)
+                            if (closingDraftId != null) {
+                                onLaunch {
+                                    withContext(Dispatchers.IO) {
+                                        configStore.drafts.deleteDraft(closingDraftId)
+                                    }
+                                }
+                            }
+                            onLaunch { withContext(Dispatchers.IO) { onPersistSession() } }
+                        } else {
+                            showNotice(s.saveError, isError = true)
+                        }
                     },
                 )
                 HorizontalDivider(color = MdTokens.tableBorder)
@@ -746,6 +950,9 @@ private fun DesktopShell(
                     onToggleSource = { activeTab?.editorState?.toggleSourceMode() },
                     onToggleFocus = { activeTab?.editorState?.toggleFocusMode() },
                     onToggleTypewriter = { activeTab?.editorState?.toggleTypewriterMode() },
+                    onShowWordCount = {
+                        if (activeTab != null) showWordCountModal = true
+                    },
                 )
             }
         }
@@ -766,6 +973,22 @@ private fun DesktopShell(
                     showQuickOpen = false
                 },
                 onDismiss = { showQuickOpen = false },
+            )
+        }
+        if (showWordCountModal && activeTab != null) {
+            val stats = remember(activeTab.id, activeTab.editorState.doc) {
+                docStatsOf(activeTab.editorState.doc)
+            }
+            WordCountModal(
+                stats = stats,
+                onDismiss = { showWordCountModal = false },
+            )
+        }
+        if (showPreferencesModal) {
+            PreferencesModal(
+                prefs = prefs,
+                onPrefsChange = onPrefsChange,
+                onDismiss = { showPreferencesModal = false },
             )
         }
         treeDialog?.let { dialog ->
@@ -795,7 +1018,7 @@ private fun DesktopShell(
                                         treeDialog = null
                                         openFile(created)
                                     } else {
-                                        dialogError = "Nome inválido ou nota já existe."
+                                        dialogError = s.saveError
                                     }
                                 }
                                 is TreeDialogState.NewFolder -> {
@@ -805,9 +1028,9 @@ private fun DesktopShell(
                                     if (created != null) {
                                         refreshNonce++
                                         treeDialog = null
-                                        showNotice("Pasta criada: ${created.fileName}")
+                                        showNotice("${s.newFolder}: ${created.fileName}")
                                     } else {
-                                        dialogError = "Nome inválido ou pasta já existe."
+                                        dialogError = s.saveError
                                     }
                                 }
                                 is TreeDialogState.Rename -> {
@@ -819,8 +1042,9 @@ private fun DesktopShell(
                                         refreshNonce++
                                         treeDialog = null
                                         showNotice(null)
+                                        withContext(Dispatchers.IO) { onPersistSession() }
                                     } else {
-                                        dialogError = "Não foi possível renomear (nome inválido ou já existe)."
+                                        dialogError = s.renameFailed(dialog.entry.name)
                                     }
                                 }
                                 is TreeDialogState.Delete -> {
@@ -828,13 +1052,14 @@ private fun DesktopShell(
                                         deleteDesktopEntry(dialog.entry.path)
                                     }
                                     if (deleted) {
-                                        tabManager.closeRemovedPath(dialog.entry.path)
+                                        tabManager.closeRemovedPath(dialog.entry.path, defaultEmptyTitle = s.untitled)
                                         listStates.keys.retainAll(tabManager.tabs.map { it.id }.toSet())
                                         refreshNonce++
                                         treeDialog = null
-                                        showNotice("Excluído: ${dialog.entry.name}")
+                                        showNotice("${s.delete}: ${dialog.entry.name}")
+                                        withContext(Dispatchers.IO) { onPersistSession() }
                                     } else {
-                                        dialogError = "Não foi possível excluir \"${dialog.entry.name}\"."
+                                        dialogError = s.saveError
                                     }
                                 }
                             }
@@ -866,24 +1091,25 @@ private fun SidebarPanel(
     onDeleteEntry: (DesktopDocEntry) -> Unit,
     onSelectOutlineEntry: (OutlineEntry) -> Unit,
 ) {
+    val s = LocalJotStrings.current
     Column(
         Modifier
             .width(270.dp)
             .fillMaxHeight()
-            .background(MdTokens.fenceBackground),
+            .background(MdTokens.sidebarBackground),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             SidebarTabChip(
-                label = "Arquivos",
+                label = s.files,
                 selected = sidebarTab == SidebarTab.FILES,
                 onClick = { onSelectTab(SidebarTab.FILES) },
                 modifier = Modifier.weight(1f),
             )
             SidebarTabChip(
-                label = "Índices",
+                label = s.outline,
                 selected = sidebarTab == SidebarTab.OUTLINE,
                 onClick = { onSelectTab(SidebarTab.OUTLINE) },
                 modifier = Modifier.weight(1f),
@@ -898,7 +1124,7 @@ private fun SidebarPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = rootDir?.fileName?.toString() ?: "Sem pasta",
+                    text = rootDir?.fileName?.toString() ?: s.folder,
                     style = MaterialTheme.typography.titleSmall,
                     color = MdTokens.text,
                     maxLines = 1,
@@ -906,7 +1132,7 @@ private fun SidebarPanel(
                     modifier = Modifier.weight(1f).padding(start = 8.dp),
                 )
                 TextButton(onClick = onPickFolder) {
-                    Text(if (rootDir == null) "Escolher pasta" else "Trocar pasta")
+                    Text(if (rootDir == null) s.chooseFolder else s.changeFolder)
                 }
             }
 
@@ -916,12 +1142,12 @@ private fun SidebarPanel(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     SidebarActionChip(
-                        label = "+ Nota",
+                        label = s.addNote,
                         onClick = { onCreateNoteIn(rootDir) },
                         modifier = Modifier.weight(1f),
                     )
                     SidebarActionChip(
-                        label = "+ Pasta",
+                        label = s.addFolder,
                         onClick = onCreateFolderInRoot,
                         modifier = Modifier.weight(1f),
                     )
@@ -929,7 +1155,7 @@ private fun SidebarPanel(
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
-                    placeholder = { Text("Buscar") },
+                    placeholder = { Text(s.find) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 )
@@ -938,7 +1164,7 @@ private fun SidebarPanel(
 
             if (rootDir == null) {
                 Text(
-                    text = "Escolha uma pasta para navegar notas, [[wikilinks]] e #tags.",
+                    text = s.openFolderHint,
                     style = MaterialTheme.typography.bodySmall,
                     color = MdTokens.muted,
                     modifier = Modifier.padding(14.dp),
@@ -978,12 +1204,19 @@ private fun SidebarPanel(
                 }
                 if (hits.isEmpty()) {
                     Text(
-                        text = "Nada encontrado",
+                        text = s.nothingFound,
                         style = MaterialTheme.typography.bodySmall,
                         color = MdTokens.muted,
                         modifier = Modifier.padding(14.dp),
                     )
                 }
+            } else if (entries.isEmpty()) {
+                Text(
+                    text = s.noFiles,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MdTokens.muted,
+                    modifier = Modifier.padding(14.dp),
+                )
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(entries, key = { it.path.toString() }) { entry ->
@@ -992,34 +1225,47 @@ private fun SidebarPanel(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(if (isOpenFile) MdTokens.background else Color.Transparent)
-                                .clickable(enabled = !entry.isDir) { onOpenPath(entry.path) }
-                                .padding(
-                                    start = (12 + minOf(entry.depth, 6) * 12).dp,
-                                    top = 4.dp,
-                                    end = 6.dp,
-                                    bottom = 4.dp,
-                                ),
+                                .height(IntrinsicSize.Min)
+                                .background(if (isOpenFile) MdTokens.activeItemBackground else Color.Transparent)
+                                .clickable(enabled = !entry.isDir) { onOpenPath(entry.path) },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = if (entry.isDir) "${entry.name}/" else entry.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (entry.isDir) MdTokens.muted else MdTokens.text,
-                                fontWeight = when {
-                                    isOpenFile -> FontWeight.SemiBold
-                                    entry.isDir -> FontWeight.Medium
-                                    else -> FontWeight.Normal
-                                },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f).padding(vertical = 3.dp),
+                            Box(
+                                Modifier
+                                    .width(3.dp)
+                                    .fillMaxHeight()
+                                    .background(if (isOpenFile) MdTokens.activeItemBorder else Color.Transparent),
                             )
-                            if (entry.isDir) {
-                                TreeEntryAction(label = "+", onClick = { onCreateNoteIn(entry.path) })
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(
+                                        start = (9 + minOf(entry.depth, 6) * 12).dp,
+                                        top = 4.dp,
+                                        end = 6.dp,
+                                        bottom = 4.dp,
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (entry.isDir) "${entry.name}/" else entry.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (entry.isDir) MdTokens.muted else MdTokens.text,
+                                    fontWeight = when {
+                                        isOpenFile -> FontWeight.SemiBold
+                                        entry.isDir -> FontWeight.Medium
+                                        else -> FontWeight.Normal
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).padding(vertical = 3.dp),
+                                )
+                                if (entry.isDir) {
+                                    TreeEntryAction(label = "+", onClick = { onCreateNoteIn(entry.path) })
+                                }
+                                TreeEntryAction(label = "✎", onClick = { onRenameEntry(entry) })
+                                TreeEntryAction(label = "×", onClick = { onDeleteEntry(entry) })
                             }
-                            TreeEntryAction(label = "✎", onClick = { onRenameEntry(entry) })
-                            TreeEntryAction(label = "×", onClick = { onDeleteEntry(entry) })
                         }
                     }
                 }
@@ -1030,7 +1276,7 @@ private fun SidebarPanel(
             }
             if (outline.isEmpty()) {
                 Text(
-                    text = "Sem títulos no documento",
+                    text = s.noHeadings,
                     style = MaterialTheme.typography.bodySmall,
                     color = MdTokens.muted,
                     modifier = Modifier.padding(14.dp),
@@ -1115,16 +1361,14 @@ private fun SidebarTabChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(4.dp)
-    Surface(
-        onClick = onClick,
-        modifier = modifier,
-        shape = shape,
-        color = if (selected) MdTokens.background else Color.Transparent,
-        border = if (selected) BorderStroke(1.dp, MdTokens.tableBorder) else null,
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            modifier = Modifier.padding(vertical = 6.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -1132,8 +1376,15 @@ private fun SidebarTabChip(
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                 color = if (selected) MdTokens.text else MdTokens.muted,
+                maxLines = 1,
             )
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(if (selected) MdTokens.activeItemBorder else Color.Transparent),
+        )
     }
 }
 
@@ -1147,6 +1398,7 @@ private fun HeaderBar(
     findOpen: Boolean,
     onToggleSidebar: () -> Unit,
     onOpenFile: () -> Unit,
+    onImportFile: () -> Unit,
     onNewTab: () -> Unit,
     onSave: () -> Unit,
     onToggleFind: () -> Unit,
@@ -1156,7 +1408,9 @@ private fun HeaderBar(
     onExportPdf: () -> Unit,
     onToggleSource: () -> Unit,
     onCycleTheme: () -> Unit,
+    onOpenPreferences: () -> Unit,
 ) {
+    val s = LocalJotStrings.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -1169,21 +1423,25 @@ private fun HeaderBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onToggleSidebar) {
-                Text(if (sidebarOpen) "Ocultar painel" else "Painel")
+                Text(if (sidebarOpen) "◧ ${s.files}" else s.files)
             }
-            TextButton(onClick = onOpenFile) { Text("Abrir arquivo") }
-            TextButton(onClick = onNewTab) { Text("Nova aba") }
-            TextButton(onClick = onSave) { Text("Salvar") }
-            TextButton(onClick = onToggleFind) { Text(if (findOpen) "Fechar busca" else "Buscar") }
-            HeaderTapButton(label = "Tabela", onClick = onInsertTable)
-            HeaderTapButton(label = "Colar+", onClick = onRichPaste)
-            TextButton(onClick = onExportHtml) { Text("Exportar HTML") }
-            TextButton(onClick = onExportPdf) { Text("Exportar PDF") }
+            TextButton(onClick = onOpenFile) { Text(s.openFile) }
+            TextButton(onClick = onImportFile) { Text(s.importAction) }
+            TextButton(onClick = onNewTab) { Text(s.addNote) }
+            TextButton(onClick = onSave) { Text(s.save) }
+            TextButton(onClick = onToggleFind) { Text(if (findOpen) "${s.close} ${s.find}" else s.find) }
+            HeaderTapButton(label = s.table, onClick = onInsertTable)
+            HeaderTapButton(label = s.smartPaste, onClick = onRichPaste)
+            TextButton(onClick = onExportHtml) { Text(s.html) }
+            TextButton(onClick = onExportPdf) { Text(s.pdf) }
             TextButton(onClick = onToggleSource) {
-                Text(if (activeTab?.editorState?.isSourceMode == true) "Visual" else "</>")
+                Text(if (activeTab?.editorState?.isSourceMode == true) "Visual" else s.source)
             }
             TextButton(onClick = onCycleTheme) {
-                Text("Tema: ${themePreset.displayName}")
+                Text("${s.theme}: ${themePreset.displayName}")
+            }
+            TextButton(onClick = onOpenPreferences) {
+                Text(s.preferences)
             }
         }
 
@@ -1198,10 +1456,10 @@ private fun HeaderBar(
 
         if (activeTab != null) {
             val (statusText, statusColor) = when {
-                activeTab.saveFailed -> "Erro ao salvar" to MaterialTheme.colorScheme.error
-                activeTab.file == null -> "Rascunho" to MdTokens.muted
-                activeTab.isDirty -> "Não salvo" to MdTokens.muted
-                else -> "Salvo" to MdTokens.muted
+                activeTab.saveFailed -> s.saveError to MaterialTheme.colorScheme.error
+                activeTab.file == null -> s.draft to MdTokens.muted
+                activeTab.isDirty -> "•" to MdTokens.muted
+                else -> "✓" to MdTokens.muted
             }
             Text(
                 text = statusText,
@@ -1257,6 +1515,7 @@ private fun DesktopNoteFindBar(
     onReplaceAll: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val s = LocalJotStrings.current
     val counter = if (matchCount == 0) "0/0" else "${matchIndex.coerceIn(0, matchCount - 1) + 1}/$matchCount"
     Column(
         Modifier
@@ -1273,7 +1532,7 @@ private fun DesktopNoteFindBar(
             OutlinedTextField(
                 value = findQuery,
                 onValueChange = onFindChange,
-                placeholder = { Text("Buscar na nota") },
+                placeholder = { Text(s.findInNote) },
                 isError = regexError,
                 singleLine = true,
                 modifier = Modifier.weight(1f),
@@ -1282,12 +1541,12 @@ private fun DesktopNoteFindBar(
             DesktopFindOptionChip(label = "[ab]", active = wholeWord, onClick = onToggleWholeWord)
             DesktopFindOptionChip(label = ".*", active = regex, onClick = onToggleRegex)
             if (regexError) {
-                Text("Regex inválida", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                Text(s.invalidRegex, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             } else {
                 Text(counter, style = MaterialTheme.typography.bodySmall, color = MdTokens.muted)
             }
-            TextButton(onClick = onPrev, enabled = matchCount > 0) { Text("Anterior") }
-            TextButton(onClick = onNext, enabled = matchCount > 0) { Text("Próximo") }
+            TextButton(onClick = onPrev, enabled = matchCount > 0) { Text("↑") }
+            TextButton(onClick = onNext, enabled = matchCount > 0) { Text("↓") }
             TextButton(onClick = onClose, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("×") }
         }
         Row(
@@ -1298,12 +1557,12 @@ private fun DesktopNoteFindBar(
             OutlinedTextField(
                 value = replaceQuery,
                 onValueChange = onReplaceChange,
-                placeholder = { Text("Substituir por") },
+                placeholder = { Text(s.replaceWith) },
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onReplaceCurrent, enabled = matchCount > 0) { Text("Substituir") }
-            TextButton(onClick = onReplaceAll, enabled = findQuery.isNotEmpty() && !regexError) { Text("Substituir tudo") }
+            TextButton(onClick = onReplaceCurrent, enabled = matchCount > 0) { Text(s.replace) }
+            TextButton(onClick = onReplaceAll, enabled = findQuery.isNotEmpty() && !regexError) { Text(s.replaceAll) }
         }
     }
 }
@@ -1316,6 +1575,7 @@ private fun TreeCrudModal(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
+    val s = LocalJotStrings.current
     val initialText = when (dialog) {
         is TreeDialogState.Rename -> dialog.entry.name
         else -> ""
@@ -1329,21 +1589,21 @@ private fun TreeCrudModal(
     }
 
     val title = when (dialog) {
-        is TreeDialogState.NewNote -> "Nova nota"
-        is TreeDialogState.NewFolder -> "Nova pasta"
-        is TreeDialogState.Rename -> "Renomear ${if (dialog.entry.isDir) "pasta" else "nota"}"
-        is TreeDialogState.Delete -> "Excluir ${if (dialog.entry.isDir) "pasta" else "nota"}"
+        is TreeDialogState.NewNote -> s.newNote
+        is TreeDialogState.NewFolder -> s.newFolder
+        is TreeDialogState.Rename -> if (dialog.entry.isDir) s.renameFolder else s.renameNote
+        is TreeDialogState.Delete -> s.deleteTitle(dialog.entry.name)
     }
     val placeholder = when (dialog) {
-        is TreeDialogState.NewNote -> "Nome da nota (ex.: resumo.md)"
-        is TreeDialogState.NewFolder -> "Nome da pasta"
-        is TreeDialogState.Rename -> "Novo nome"
+        is TreeDialogState.NewNote -> "${s.newNote} (.md)"
+        is TreeDialogState.NewFolder -> s.newFolder
+        is TreeDialogState.Rename -> s.rename
         is TreeDialogState.Delete -> ""
     }
     val confirmLabel = when (dialog) {
-        is TreeDialogState.NewNote, is TreeDialogState.NewFolder -> "Criar"
-        is TreeDialogState.Rename -> "Renomear"
-        is TreeDialogState.Delete -> "Excluir"
+        is TreeDialogState.NewNote, is TreeDialogState.NewFolder -> s.create
+        is TreeDialogState.Rename -> s.rename
+        is TreeDialogState.Delete -> s.delete
     }
 
     Box(
@@ -1389,7 +1649,7 @@ private fun TreeCrudModal(
                 )
                 if (dialog is TreeDialogState.NewNote) {
                     Text(
-                        text = "Pasta: ${dialog.parentDir.fileName ?: dialog.parentDir}",
+                        text = "${s.folder}: ${dialog.parentDir.fileName ?: dialog.parentDir}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MdTokens.muted,
                         maxLines = 1,
@@ -1397,9 +1657,8 @@ private fun TreeCrudModal(
                     )
                 }
                 if (dialog is TreeDialogState.Delete) {
-                    val extra = if (dialog.entry.isDir) " e todo o seu conteúdo" else ""
                     Text(
-                        text = "Excluir \"${dialog.entry.name}\"$extra? Esta ação não pode ser desfeita.",
+                        text = if (dialog.entry.isDir) s.deleteFolderConfirm else s.deleteFileConfirm,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MdTokens.text,
                     )
@@ -1441,7 +1700,7 @@ private fun TreeCrudModal(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss, enabled = !busy) {
-                        Text("Cancelar")
+                        Text(s.cancel)
                     }
                     Spacer(Modifier.width(8.dp))
                     TextButton(onClick = { onConfirm(inputText) }, enabled = !busy) {
@@ -1491,7 +1750,9 @@ private fun DesktopFooterBar(
     onToggleSource: () -> Unit,
     onToggleFocus: () -> Unit,
     onToggleTypewriter: () -> Unit,
+    onShowWordCount: () -> Unit,
 ) {
+    val s = LocalJotStrings.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1502,22 +1763,22 @@ private fun DesktopFooterBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         FooterToggleButton(
-            label = "Índices",
+            label = s.outline,
             active = outlineOpen,
             onClick = onToggleOutline,
         )
         FooterToggleButton(
-            label = "</>",
+            label = s.source,
             active = activeTab?.editorState?.isSourceMode == true,
             onClick = onToggleSource,
         )
         FooterToggleButton(
-            label = "Foco",
+            label = s.focus,
             active = activeTab?.editorState?.isFocusMode == true,
             onClick = onToggleFocus,
         )
         FooterToggleButton(
-            label = "Máquina",
+            label = s.typewriter,
             active = activeTab?.editorState?.isTypewriterMode == true,
             onClick = onToggleTypewriter,
         )
@@ -1527,12 +1788,325 @@ private fun DesktopFooterBar(
                 docStatsOf(activeTab.editorState.doc)
             }
             Text(
-                text = "Contagem de Palavras: ${stats.words} palavras · ${stats.chars} caracteres · ${stats.lines} linhas · ~${stats.readingTimeMinutes} min leitura",
+                text = s.wordCountSummary(stats.words, stats.chars, stats.readingTimeMinutes),
                 style = MaterialTheme.typography.labelSmall,
                 color = MdTokens.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onShowWordCount)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
             )
+        }
+    }
+}
+
+/** Popover/diálogo de contagem de palavras no estilo Typora (Minutos, Linhas, Palavras, Caracteres). */
+@Composable
+private fun WordCountModal(
+    stats: io.github.walterfr.jotmd.core.DocStats,
+    onDismiss: () -> Unit,
+) {
+    val s = LocalJotStrings.current
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.20f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
+        Surface(
+            modifier = Modifier
+                .padding(end = 16.dp, bottom = 38.dp)
+                .width(260.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
+            shape = RoundedCornerShape(8.dp),
+            color = MdTokens.fenceBackground,
+            border = BorderStroke(1.dp, MdTokens.tableBorder),
+            shadowElevation = 12.dp,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = s.wordCount,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MdTokens.text,
+                )
+                HorizontalDivider(color = MdTokens.tableBorder)
+                WordCountRow(label = s.minutes, value = stats.readingTimeMinutes.toString())
+                WordCountRow(label = s.lines, value = stats.lines.toString())
+                WordCountRow(label = s.words, value = stats.words.toString())
+                WordCountRow(label = s.characters, value = stats.chars.toString())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text(s.close) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WordCountRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, color = MdTokens.muted)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MdTokens.text,
+        )
+    }
+}
+
+private fun paletteForPreset(preset: MdThemePreset): MdPalette = when (preset) {
+    MdThemePreset.GITHUB -> LightMdPalette
+    MdThemePreset.NEWSPRINT -> NewsprintMdPalette
+    MdThemePreset.PIXYLL -> PixyllMdPalette
+    MdThemePreset.WHITEY -> WhiteyMdPalette
+    MdThemePreset.NIGHT -> DarkMdPalette
+}
+
+/** Modal de Preferências (Aparência, Editor e Geral) inspirado no Typora. */
+@Composable
+private fun PreferencesModal(
+    prefs: EditorPrefs,
+    onPrefsChange: (EditorPrefs) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val s = LocalJotStrings.current
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(500.dp)
+                .heightIn(max = 620.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
+            shape = RoundedCornerShape(8.dp),
+            color = MdTokens.fenceBackground,
+            border = BorderStroke(1.dp, MdTokens.tableBorder),
+            shadowElevation = 12.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = s.preferences,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MdTokens.text,
+                    )
+                    TextButton(onClick = onDismiss) { Text(s.close) }
+                }
+                HorizontalDivider(color = MdTokens.tableBorder)
+
+                // Seção 1: Aparência
+                Text(
+                    text = s.appearance,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MdTokens.link,
+                )
+                Text(text = s.theme, style = MaterialTheme.typography.bodySmall, color = MdTokens.muted)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (preset in MdThemePreset.entries) {
+                        val p = paletteForPreset(preset)
+                        val selected = prefs.themePreset == preset
+                        Surface(
+                            onClick = { onPrefsChange(prefs.copy(themePreset = preset)) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(6.dp),
+                            color = p.background,
+                            border = BorderStroke(
+                                width = if (selected) 2.dp else 1.dp,
+                                color = if (selected) MdTokens.activeItemBorder else MdTokens.tableBorder,
+                            ),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(14.dp)
+                                        .clip(CircleShape)
+                                        .background(p.link),
+                                )
+                                Text(
+                                    text = preset.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = p.text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(s.fontSize, style = MaterialTheme.typography.bodySmall, color = MdTokens.text)
+                        Text(
+                            "${prefs.fontSizeSp.roundToInt()} sp",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdTokens.muted,
+                        )
+                    }
+                    Slider(
+                        value = prefs.fontSizeSp.coerceIn(14f, 22f),
+                        onValueChange = { onPrefsChange(prefs.copy(fontSizeSp = it.roundToInt().toFloat())) },
+                        valueRange = 14f..22f,
+                        steps = 7,
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(s.columnWidth, style = MaterialTheme.typography.bodySmall, color = MdTokens.text)
+                        Text(
+                            "${prefs.maxColumnWidthDp} dp",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdTokens.muted,
+                        )
+                    }
+                    Slider(
+                        value = prefs.maxColumnWidthDp.toFloat().coerceIn(680f, 1100f),
+                        onValueChange = {
+                            val snapped = ((it / 20f).roundToInt() * 20).coerceIn(680, 1100)
+                            onPrefsChange(prefs.copy(maxColumnWidthDp = snapped))
+                        },
+                        valueRange = 680f..1100f,
+                    )
+                }
+
+                HorizontalDivider(color = MdTokens.tableBorder)
+
+                // Seção 2: Editor
+                Text(
+                    text = s.editor,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MdTokens.link,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(s.autoPair, style = MaterialTheme.typography.bodyMedium, color = MdTokens.text)
+                    Switch(
+                        checked = prefs.autoPairEnabled,
+                        onCheckedChange = { onPrefsChange(prefs.copy(autoPairEnabled = it)) },
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(s.indentSize, style = MaterialTheme.typography.bodyMedium, color = MdTokens.text)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (size in listOf(2, 4)) {
+                            DesktopFindOptionChip(
+                                label = "$size ${s.spaces}",
+                                active = prefs.indentSize == size,
+                                onClick = { onPrefsChange(prefs.copy(indentSize = size)) },
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MdTokens.tableBorder)
+
+                // Seção 3: Geral
+                Text(
+                    text = s.general,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MdTokens.link,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(s.language, style = MaterialTheme.typography.bodyMedium, color = MdTokens.text)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val langOptions = listOf(
+                            AppLanguage.SYSTEM to s.system,
+                            AppLanguage.PT_BR to "PT-BR",
+                            AppLanguage.EN to "EN",
+                        )
+                        for ((lang, label) in langOptions) {
+                            DesktopFindOptionChip(
+                                label = label,
+                                active = prefs.language == lang,
+                                onClick = { onPrefsChange(prefs.copy(language = lang)) },
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(s.restoreSession, style = MaterialTheme.typography.bodyMedium, color = MdTokens.text)
+                    Switch(
+                        checked = prefs.restoreSession,
+                        onCheckedChange = { onPrefsChange(prefs.copy(restoreSession = it)) },
+                    )
+                }
+            }
         }
     }
 }
@@ -1576,9 +2150,10 @@ private fun QuickOpenModal(
     onSelect: (QuickOpenItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val s = LocalJotStrings.current
     val focusRequester = remember { FocusRequester() }
-    val items = remember(query, entries, openTabs) {
-        filterQuickOpen(query = query, entries = entries, openTabs = openTabs)
+    val items = remember(query, entries, openTabs, s.draft) {
+        filterQuickOpen(query = query, entries = entries, openTabs = openTabs, draftLabel = s.draft)
     }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
@@ -1611,7 +2186,7 @@ private fun QuickOpenModal(
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
-                    placeholder = { Text("Abrir rápido (nome ou caminho)") },
+                    placeholder = { Text(s.quickOpenPlaceholder) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1635,7 +2210,7 @@ private fun QuickOpenModal(
                 HorizontalDivider(color = MdTokens.tableBorder)
                 if (items.isEmpty()) {
                     Text(
-                        text = "Nenhum arquivo encontrado",
+                        text = s.quickOpenNothingFound,
                         style = MaterialTheme.typography.bodySmall,
                         color = MdTokens.muted,
                         modifier = Modifier.padding(12.dp),
@@ -1748,12 +2323,12 @@ private fun openExternalUri(uri: String) {
     }
 }
 
-private suspend fun pickDirectory(owner: Frame, initial: Path?): Path? =
+private suspend fun pickDirectory(owner: Frame, initial: Path?, dialogTitleText: String): Path? =
     suspendCoroutine { cont ->
         SwingUtilities.invokeLater {
             runCatching { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()) }
             val chooser = JFileChooser(initial?.toFile()).apply {
-                dialogTitle = "Escolher pasta de notas"
+                dialogTitle = dialogTitleText
                 fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
                 isAcceptAllFileFilterUsed = false
             }
@@ -1763,16 +2338,43 @@ private suspend fun pickDirectory(owner: Frame, initial: Path?): Path? =
         }
     }
 
+private suspend fun pickImportFile(
+    owner: Frame,
+    initialDir: Path?,
+    dialogTitleText: String,
+): Path? = suspendCoroutine { cont ->
+    SwingUtilities.invokeLater {
+        runCatching { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()) }
+        val chooser = JFileChooser(initialDir?.toFile()).apply {
+            dialogTitle = dialogTitleText
+            fileSelectionMode = JFileChooser.FILES_ONLY
+            fileFilter = FileNameExtensionFilter(
+                "HTML, DOCX, EPUB (*.html, *.htm, *.docx, *.epub)",
+                "html",
+                "htm",
+                "xhtml",
+                "docx",
+                "epub",
+            )
+            isAcceptAllFileFilterUsed = true
+        }
+        val result = chooser.showOpenDialog(owner)
+        val selected = if (result == JFileChooser.APPROVE_OPTION) chooser.selectedFile?.toPath() else null
+        cont.resume(selected)
+    }
+}
+
 private suspend fun pickMarkdownFile(
     owner: Frame,
     mode: Int,
     initialDir: Path?,
+    strings: JotStrings,
     defaultName: String? = null,
 ): Path? = suspendCoroutine { cont ->
     SwingUtilities.invokeLater {
         val dialog = FileDialog(
             owner,
-            if (mode == FileDialog.SAVE) "Salvar arquivo Markdown" else "Abrir arquivo Markdown",
+            if (mode == FileDialog.SAVE) strings.saveAs else strings.openFile,
             mode,
         ).apply {
             directory = initialDir?.toString()

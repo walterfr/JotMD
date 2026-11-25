@@ -46,6 +46,9 @@ data class MdPalette(
     val alertWarning: Color,
     val alertTip: Color,
     val alertCaution: Color,
+    val sidebarBackground: Color,
+    val activeItemBackground: Color,
+    val activeItemBorder: Color,
 )
 
 val LightMdPalette = MdPalette(
@@ -69,6 +72,9 @@ val LightMdPalette = MdPalette(
     alertWarning = Color(0xFF9A6700),
     alertTip = Color(0xFF1F883D),
     alertCaution = Color(0xFFCF222E),
+    sidebarBackground = Color(0xFFFAFAFA),
+    activeItemBackground = Color(0xFFE8EEF5),
+    activeItemBorder = Color(0xFF4183C4),
 )
 
 val DarkMdPalette = MdPalette(
@@ -92,6 +98,9 @@ val DarkMdPalette = MdPalette(
     alertWarning = Color(0xFFD29922),
     alertTip = Color(0xFF1F883D),
     alertCaution = Color(0xFFCF222E),
+    sidebarBackground = Color(0xFF2E3033),
+    activeItemBackground = Color(0xFF222222),
+    activeItemBorder = Color(0xFF8D8DF0),
 )
 
 val NewsprintMdPalette = MdPalette(
@@ -115,6 +124,9 @@ val NewsprintMdPalette = MdPalette(
     alertWarning = LightMdPalette.alertWarning,
     alertTip = LightMdPalette.alertTip,
     alertCaution = LightMdPalette.alertCaution,
+    sidebarBackground = Color(0xFFECEAE4),
+    activeItemBackground = Color(0xFFE2DFD7),
+    activeItemBorder = Color(0xFF065588),
 )
 
 val PixyllMdPalette = MdPalette(
@@ -138,6 +150,9 @@ val PixyllMdPalette = MdPalette(
     alertWarning = LightMdPalette.alertWarning,
     alertTip = LightMdPalette.alertTip,
     alertCaution = LightMdPalette.alertCaution,
+    sidebarBackground = Color(0xFFFAFAFA),
+    activeItemBackground = Color(0xFFEFEBF5),
+    activeItemBorder = Color(0xFF463F5C),
 )
 
 val WhiteyMdPalette = MdPalette(
@@ -161,6 +176,9 @@ val WhiteyMdPalette = MdPalette(
     alertWarning = LightMdPalette.alertWarning,
     alertTip = LightMdPalette.alertTip,
     alertCaution = LightMdPalette.alertCaution,
+    sidebarBackground = Color(0xFFFAFAFA),
+    activeItemBackground = Color(0xFFEAF3FA),
+    activeItemBorder = Color(0xFF2484C1),
 )
 
 /**
@@ -206,11 +224,20 @@ object MdTokens {
     }
 
     val blurText: Color get() = if (isDark) Color(0xFF686868) else Color(0xFFC8C8C8)
-    val maxColumnWidth = 860.dp
-    val sourceMaxColumnWidth = 800.dp
+    var maxColumnWidth by mutableStateOf(860.dp)
+    var sourceMaxColumnWidth by mutableStateOf(800.dp)
 
-    val base = 16.sp
-    val bodyLineHeight = 25.6.sp // 1.6
+    var base by mutableStateOf(16.sp)
+    var bodyLineHeight by mutableStateOf(25.6.sp) // 1.6
+
+    fun applyPreferences(prefs: EditorPrefs) {
+        val p = prefs.normalized()
+        themePreset = p.themePreset
+        base = p.fontSizeSp.sp
+        bodyLineHeight = (p.fontSizeSp * 1.6f).sp
+        maxColumnWidth = p.maxColumnWidthDp.dp
+        sourceMaxColumnWidth = (p.maxColumnWidthDp - 60).coerceAtLeast(560).dp
+    }
 
     val text: Color get() = palette.text
     val headingText: Color get() = palette.headingText
@@ -228,6 +255,9 @@ object MdTokens {
     val metaBackground: Color get() = palette.metaBackground // pre.md-meta-block (front matter)
     val highlightBackground: Color get() = palette.highlightBackground
     val highlightText: Color get() = palette.highlightText
+    val sidebarBackground: Color get() = palette.sidebarBackground
+    val activeItemBackground: Color get() = palette.activeItemBackground
+    val activeItemBorder: Color get() = palette.activeItemBorder
 
     /** Destaques de ocorrências de busca na nota (`--search-select-bg-color` / `.md-search-hit`). */
     val searchHitBackground: Color get() = if (isDark) Color(0xCFC78C3C) else Color(0x4DF8C074)

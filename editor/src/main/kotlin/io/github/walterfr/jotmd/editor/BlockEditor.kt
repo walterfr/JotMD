@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,17 +72,17 @@ fun BlockEditor(
 
     when {
         state.focusedId == block.id -> {
-            if (state.isSourceMode) {
-                val text = state.editValue.text
-                val totalLines = text.count { it == '\n' } + 1
-                val activeLine = activeLine1Based(text, state.editValue.selection.start)
-                Row(itemModifier.fillMaxWidth()) {
+            val text = state.editValue.text
+            val totalLines = text.count { it == '\n' } + 1
+            val activeLine = activeLine1Based(text, state.editValue.selection.start)
+            Row(itemModifier.fillMaxWidth()) {
+                if (state.isSourceMode) {
                     SourceGutter(formatSourceGutter(totalLines, activeLine))
                     Spacer(Modifier.width(8.dp))
+                }
+                key(block.id) {
                     FocusedBlockField(block, state, activeSearchRange, Modifier.weight(1f))
                 }
-            } else {
-                FocusedBlockField(block, state, activeSearchRange, itemModifier.fillMaxWidth())
             }
         }
         state.isSourceMode -> {

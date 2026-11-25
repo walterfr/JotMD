@@ -2,6 +2,9 @@ package io.github.walterfr.jotmd.desktop
 
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import io.github.walterfr.jotmd.editor.AppLanguage
+import io.github.walterfr.jotmd.editor.EditorPrefs
+import io.github.walterfr.jotmd.editor.MdThemePreset
 import io.github.walterfr.jotmd.editor.resolveLocalImageFile
 import org.junit.jupiter.api.io.TempDir
 import java.awt.datatransfer.Clipboard
@@ -10,11 +13,14 @@ import java.awt.datatransfer.StringSelection
 import java.awt.datatransfer.Transferable
 import java.awt.datatransfer.UnsupportedFlavorException
 import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -490,5 +496,134 @@ class DesktopWorkspaceTest {
         )
         val count = (ico[4].toInt() and 0xFF) or ((ico[5].toInt() and 0xFF) shl 8)
         assertTrue(count >= 5, "jotmd.ico deve conter ao menos 5 resolucoes")
+    }
+
+    @Test
+    fun `saveTabIfChanged grava atomicamente sem deixar arquivos tmp residuais`(@TempDir root: Path) {
+        val file = root.resolve("atomico.md")
+        Files.writeString(file, "v1\n", StandardCharsets.UTF_8)
+
+        val manager = DesktopTabManager()
+        val tab = assertNotNull(manager.openOrFocus(file))
+        tab.editorState.focus(tab.editorState.doc.blocks.first())
+        tab.editorState.edit(TextFieldValue("v2 atualizado", TextRange(13)))
+
+        assertTrue(saveTabIfChanged(tab))
+        assertEquals("v2 atualizado\n", Files.readString(file, StandardCharsets.UTF_8))
+        val lingeringTmp = Files.list(root).use { stream ->
+            stream.anyMatch { ".tmp." in it.fileName.toString() }
+        }
+        assertFalse(lingeringTmp, "Escrita atomica nao pode deixar arquivos .tmp residuais")
+    }
+
+    @Test
+    fun `DesktopConfigStore faz roundtrip de preferencias, sessao e rascunhos via openDraft`(@TempDir root: Path) {
+        val configDir = root.resolve("config")
+        val workspaceDir = Files.createDirectories(root.resolve("ws"))
+        val noteA = workspaceDir.resolve("a.md").also { Files.writeString(it, "# A\n", StandardCharsets.UTF_8) }
+        val noteMissing = workspaceDir.resolve("removido.md")
+
+        val store = DesktopConfigStore(configDir)
+        val savedPrefs = EditorPrefs(
+            themePreset = MdThemePreset.NIGHT,
+            fontSizeSp = 18f,
+            maxColumnWidthDp = 940,
+            autoPairEnabled = false,
+            indentSize = 4,
+            language = AppLanguage.EN,
+            restoreSession = false,
+        )
+        store.save(
+            DesktopSessionState(
+                prefs = savedPrefs,
+                lastRootDir = workspaceDir,
+                openFiles = listOf(noteA, noteMissing),
+            ),
+        )
+        assertTrue(store.drafts.saveDraft("d1", "Rascunho 1", "Texto em progresso\n"))
+
+        val reloaded = store.load()
+        assertEquals(savedPrefs, reloaded.prefs)
+        assertEquals(workspaceDir.toAbsolutePath().normalize(), reloaded.lastRootDir)
+        assertEquals(listOf(noteA.toAbsolutePath().normalize()), reloaded.openFiles)
+
+        val drafts = store.drafts.loadDrafts()
+        assertEquals(1, drafts.size)
+        val manager = DesktopTabManager()
+        val draftTab = manager.openDraft(drafts.single())
+        assertEquals("d1", draftTab.draftId)
+        assertEquals("Rascunho 1", draftTab.title)
+        assertNull(draftTab.file)
+        assertEquals("Texto em progresso\n", draftTab.editorState.text())
+        assertEquals(draftTab.id, manager.openDraft(drafts.single()).id)
+    }
+
+    @Test
+    fun `importDesktopFile converte HTML e DOCX ZIP para titulo e Markdown`(@TempDir root: Path) {
+        val htmlFile = root.resolve("Guia Rapido.html")
+        Files.writeString(
+            htmlFile,
+            "<html><body><h1>Titulo</h1><p>Texto com <strong>negrito</strong>.</p></body></html>",
+            StandardCharsets.UTF_8,
+        )
+        val htmlImported = assertNotNull(importDesktopFile(htmlFile))
+        assertEquals("Guia Rapido.md", htmlImported.first)
+        assertTrue(htmlImported.second.contains("# Titulo"))
+        assertTrue(htmlImported.second.contains("**negrito**"))
+
+        val docxFile = root.resolve("relatorio.docx")
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            zos.putNextEntry(ZipEntry("word/document.xml"))
+            zos.write(
+                """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                  <w:body>
+                    <w:p>
+                      <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
+                      <w:r><w:t>Resumo</w:t></w:r>
+                    </w:p>
+                    <w:p>
+                      <w:r><w:t>Paragrafo importado</w:t></w:r>
+                    </w:p>
+                  </w:body>
+                </w:document>
+                """.trimIndent().toByteArray(StandardCharsets.UTF_8),
+            )
+            zos.closeEntry()
+        }
+        Files.write(docxFile, baos.toByteArray())
+
+        val docxImported = assertNotNull(importDesktopFile(docxFile))
+        assertEquals("relatorio.md", docxImported.first)
+        assertTrue(docxImported.second.contains("# Resumo"))
+        assertTrue(docxImported.second.contains("Paragrafo importado"))
+        assertNull(importDesktopFile(root.resolve("ausente.html")))
+    }
+
+    @Test
+    fun `resolveStartupPaths filtra existentes, normaliza e remove duplicatas`(@TempDir root: Path) {
+        val dir = Files.createDirectories(root.resolve("notas"))
+        val file = root.resolve("doc.md").also { Files.writeString(it, "# Doc\n", StandardCharsets.UTF_8) }
+        val nonExistent = root.resolve("nao-existe.md")
+
+        val resolved = resolveStartupPaths(
+            arrayOf(
+                "   ",
+                nonExistent.toString(),
+                file.toString(),
+                dir.toString(),
+                file.toString(),
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                file.toAbsolutePath().normalize(),
+                dir.toAbsolutePath().normalize(),
+            ),
+            resolved,
+        )
     }
 }

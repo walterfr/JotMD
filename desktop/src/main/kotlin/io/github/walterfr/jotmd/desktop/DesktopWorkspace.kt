@@ -3,8 +3,14 @@ package io.github.walterfr.jotmd.desktop
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.walterfr.jotmd.core.DraftRepository
+import io.github.walterfr.jotmd.core.DraftSnapshot
 import io.github.walterfr.jotmd.core.docIndex
+import io.github.walterfr.jotmd.core.importDocumentBytes
+import io.github.walterfr.jotmd.core.suggestedMarkdownTitle
 import io.github.walterfr.jotmd.core.tagsOf
+import io.github.walterfr.jotmd.core.writeTextAtomic
+import io.github.walterfr.jotmd.editor.EditorPrefs
 import io.github.walterfr.jotmd.editor.EditorState
 import java.awt.Image
 import java.awt.Toolkit
@@ -14,6 +20,7 @@ import java.awt.datatransfer.Transferable
 import java.awt.image.BufferedImage
 import java.awt.image.RenderedImage
 import java.io.IOException
+import java.io.StringWriter
 import java.nio.charset.StandardCharsets
 import java.nio.file.ClosedWatchServiceException
 import java.nio.file.FileAlreadyExistsException
@@ -30,6 +37,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.text.Normalizer
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.imageio.ImageIO
@@ -43,18 +51,20 @@ class DesktopTab(
     val editorState: EditorState,
     lastSaved: String? = null,
     saveFailed: Boolean = false,
+    draftId: String? = null,
 ) {
     var file: Path? by mutableStateOf(file)
     var title: String by mutableStateOf(title)
     var lastSaved: String? by mutableStateOf(lastSaved)
     var saveFailed: Boolean by mutableStateOf(saveFailed)
+    var draftId: String? by mutableStateOf(draftId)
 
     val isDirty: Boolean
         get() = file != null && editorState.text() != lastSaved
 }
 
 /**
- * Grava o texto atual de [tab] em UTF-8 somente se diferir de [DesktopTab.lastSaved].
+ * Grava o texto atual de [tab] em UTF-8 de forma atômica somente se diferir de [DesktopTab.lastSaved].
  * Devolve `true` quando escreveu em disco; marca [DesktopTab.saveFailed] em erro de E/S.
  */
 fun saveTabIfChanged(tab: DesktopTab): Boolean {
@@ -68,8 +78,7 @@ fun saveTabIfChanged(tab: DesktopTab): Boolean {
         return false
     }
     return try {
-        path.parent?.let { Files.createDirectories(it) }
-        Files.writeString(path, current, StandardCharsets.UTF_8)
+        writeTextAtomic(path, current)
         tab.lastSaved = current
         tab.saveFailed = false
         true
@@ -91,13 +100,32 @@ class DesktopTabManager {
 
     private var nextId = 1L
 
-    fun openInitial(title: String, content: String): DesktopTab {
+    fun openInitial(title: String, content: String, draftId: String? = null): DesktopTab {
         val tab = DesktopTab(
             id = nextId++,
             file = null,
             title = title,
             editorState = EditorState(content),
             lastSaved = null,
+            draftId = draftId,
+        )
+        tabs = tabs + tab
+        activeTabId = tab.id
+        return tab
+    }
+
+    fun openDraft(draft: DraftSnapshot): DesktopTab {
+        tabs.firstOrNull { it.draftId == draft.id }?.let { existing ->
+            activeTabId = existing.id
+            return existing
+        }
+        val tab = DesktopTab(
+            id = nextId++,
+            file = null,
+            title = draft.title.ifBlank { "Sem Título" },
+            editorState = EditorState(draft.content),
+            lastSaved = null,
+            draftId = draft.id,
         )
         tabs = tabs + tab
         activeTabId = tab.id
@@ -150,7 +178,7 @@ class DesktopTabManager {
      * Faz flush da aba antes de fechar; se a gravação falhar, cancela o fechamento e devolve `false`.
      * Ao fechar a última aba, abre uma nova aba vazia para manter o editor utilizável.
      */
-    fun close(id: Long): Boolean {
+    fun close(id: Long, defaultEmptyTitle: String = "Sem Título"): Boolean {
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return false
         val tab = tabs[index]
@@ -162,7 +190,7 @@ class DesktopTabManager {
         if (remaining.isEmpty()) {
             tabs = emptyList()
             activeTabId = null
-            newEmptyTab()
+            newEmptyTab(defaultEmptyTitle)
             return true
         }
         tabs = remaining
@@ -176,8 +204,7 @@ class DesktopTabManager {
         val normalized = targetPath.toAbsolutePath().normalize()
         val current = tab.editorState.text()
         return try {
-            normalized.parent?.let { Files.createDirectories(it) }
-            Files.writeString(normalized, current, StandardCharsets.UTF_8)
+            writeTextAtomic(normalized, current)
             tab.file = normalized
             tab.title = normalized.fileName?.toString() ?: normalized.toString()
             tab.lastSaved = current
@@ -219,7 +246,7 @@ class DesktopTabManager {
      * Fecha abas cujo arquivo seja [removedPath] ou esteja dentro dessa pasta,
      * sem gravar de volta o arquivo removido; abre `"Sem Título"` se todas fecharem.
      */
-    fun closeRemovedPath(removedPath: Path) {
+    fun closeRemovedPath(removedPath: Path, defaultEmptyTitle: String = "Sem Título") {
         val normRemoved = removedPath.toAbsolutePath().normalize()
         val remaining = tabs.filterNot { tab ->
             val tabFile = tab.file?.toAbsolutePath()?.normalize() ?: return@filterNot false
@@ -229,7 +256,7 @@ class DesktopTabManager {
         if (remaining.isEmpty()) {
             tabs = emptyList()
             activeTabId = null
-            newEmptyTab()
+            newEmptyTab(defaultEmptyTitle)
             return
         }
         val prevActiveIndex = tabs.indexOfFirst { it.id == activeTabId }
@@ -590,6 +617,7 @@ fun filterQuickOpen(
     entries: List<DesktopDocEntry>,
     openTabs: List<DesktopTab>,
     limit: Int = 30,
+    draftLabel: String = "Rascunho",
 ): List<QuickOpenItem> {
     if (limit <= 0) return emptyList()
 
@@ -625,7 +653,7 @@ fun filterQuickOpen(
             candidates += QuickOpenCandidate(
                 item = QuickOpenItem(
                     title = tab.title,
-                    subtitle = "Rascunho",
+                    subtitle = draftLabel,
                     path = null,
                     tabId = tab.id,
                 ),
@@ -1011,3 +1039,134 @@ private fun readHtmlFromTransferable(contents: Transferable): String? {
     }
     return null
 }
+
+private const val MAX_IMPORT_FILE_BYTES = 16L * 1024L * 1024L
+private const val KEY_LAST_ROOT_DIR = "lastRootDir"
+private const val KEY_OPEN_FILES = "openFiles"
+private const val KEY_OPEN_FILE_PREFIX = "openFile."
+
+/** Estado persistido da sessão desktop: preferências do editor, última pasta e abas com arquivo. */
+data class DesktopSessionState(
+    val prefs: EditorPrefs = EditorPrefs(),
+    val lastRootDir: Path? = null,
+    val openFiles: List<Path> = emptyList(),
+)
+
+/** Diretório de configuração padrão do JotMD no sistema operacional (`%APPDATA%\JotMD` no Windows). */
+fun defaultJotMdConfigDir(): Path {
+    val os = System.getProperty("os.name").orEmpty().lowercase()
+    if (os.contains("win")) {
+        val appData = System.getenv("APPDATA")?.trim()?.takeIf { it.isNotEmpty() }
+        if (appData != null) {
+            return Path.of(appData, "JotMD")
+        }
+    }
+    val home = System.getProperty("user.home").orEmpty().ifBlank { "." }
+    return Path.of(home, ".config", "jotmd")
+}
+
+/**
+ * Armazena preferências, pasta raiz e arquivos abertos em `preferences.properties`
+ * com gravação atômica, além de rascunhos em `drafts/`.
+ */
+class DesktopConfigStore(private val baseDir: Path = defaultJotMdConfigDir()) {
+    val drafts: DraftRepository = DraftRepository(baseDir.resolve("drafts"))
+    private val prefsFile: Path = baseDir.resolve("preferences.properties")
+
+    fun load(): DesktopSessionState {
+        if (!Files.isRegularFile(prefsFile)) return DesktopSessionState()
+        return try {
+            val props = Properties()
+            Files.newBufferedReader(prefsFile, StandardCharsets.UTF_8).use { props.load(it) }
+            val map = props.stringPropertyNames().associateWith { props.getProperty(it).orEmpty() }
+            val prefs = EditorPrefs.fromMap(map)
+            val lastRootDir = map[KEY_LAST_ROOT_DIR]
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { raw -> runCatching { Path.of(raw).toAbsolutePath().normalize() }.getOrNull() }
+                ?.takeIf { Files.isDirectory(it) }
+
+            val rawOpenFiles = ArrayList<String>()
+            map[KEY_OPEN_FILES]
+                ?.split('\n')
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.let { rawOpenFiles.addAll(it) }
+            map.entries
+                .filter { it.key.startsWith(KEY_OPEN_FILE_PREFIX) }
+                .sortedBy { it.key.removePrefix(KEY_OPEN_FILE_PREFIX).toIntOrNull() ?: Int.MAX_VALUE }
+                .mapNotNull { it.value.trim().takeIf { v -> v.isNotEmpty() } }
+                .let { rawOpenFiles.addAll(it) }
+
+            val openFiles = rawOpenFiles
+                .mapNotNull { raw -> runCatching { Path.of(raw).toAbsolutePath().normalize() }.getOrNull() }
+                .filter { Files.isRegularFile(it) }
+                .distinct()
+
+            DesktopSessionState(
+                prefs = prefs,
+                lastRootDir = lastRootDir,
+                openFiles = openFiles,
+            )
+        } catch (_: Exception) {
+            DesktopSessionState()
+        }
+    }
+
+    fun save(state: DesktopSessionState) {
+        val props = Properties()
+        for ((k, v) in state.prefs.normalized().toMap()) {
+            props.setProperty(k, v)
+        }
+        state.lastRootDir
+            ?.toAbsolutePath()
+            ?.normalize()
+            ?.takeIf { Files.isDirectory(it) }
+            ?.let { props.setProperty(KEY_LAST_ROOT_DIR, it.toString()) }
+
+        val validOpenFiles = state.openFiles
+            .map { it.toAbsolutePath().normalize() }
+            .filter { Files.isRegularFile(it) }
+            .distinct()
+        if (validOpenFiles.isNotEmpty()) {
+            props.setProperty(KEY_OPEN_FILES, validOpenFiles.joinToString("\n") { it.toString() })
+        }
+
+        val writer = StringWriter()
+        props.store(writer, "JotMD Desktop Preferences")
+        writeTextAtomic(prefsFile, writer.toString())
+    }
+}
+
+/**
+ * Importa arquivo local (`.html`/`.htm`/`.xhtml`/`.docx`/`.epub` ou texto/Markdown) até 16 MB
+ * para Markdown, devolvendo `títuloSugerido.md to markdown` ou `null`.
+ */
+fun importDesktopFile(path: Path): Pair<String, String>? {
+    val norm = runCatching { path.toAbsolutePath().normalize() }.getOrNull() ?: return null
+    if (!Files.isRegularFile(norm) || !Files.isReadable(norm)) return null
+    return try {
+        val size = Files.size(norm)
+        if (size > MAX_IMPORT_FILE_BYTES) return null
+        val bytes = Files.readAllBytes(norm)
+        if (bytes.size.toLong() > MAX_IMPORT_FILE_BYTES) return null
+        val fileName = norm.fileName?.toString() ?: return null
+        val md = importDocumentBytes(fileName, bytes) ?: return null
+        suggestedMarkdownTitle(fileName) to md
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Resolve argumentos de linha de comando / Explorer para caminhos normalizados existentes
+ * (arquivos regulares ou diretórios), preservando ordem e sem duplicatas.
+ */
+fun resolveStartupPaths(args: Array<String>): List<Path> =
+    args.asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .mapNotNull { raw -> runCatching { Path.of(raw).toAbsolutePath().normalize() }.getOrNull() }
+        .filter { Files.isRegularFile(it) || Files.isDirectory(it) }
+        .distinct()
+        .toList()
