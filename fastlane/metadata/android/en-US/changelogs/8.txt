@@ -1,0 +1,3 @@
+- Start Android and Desktop in a clean blank note instead of opening the bundled reference document
+- Preserve open tabs, edits, and scroll/cursor position when rotating the screen
+- Persist and restore open SAF tabs and active tab selection across app restarts

@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.walterfr.jotmd"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 7
-        versionName = "0.4.1"
+        versionCode = 8
+        versionName = "0.4.2"
     }
 
     val releaseKeystorePath = System.getenv("KEYSTORE_PATH")
@@ -56,10 +56,6 @@ android {
         includeInApk = false
         includeInBundle = false
     }
-
-    // O doc de referência é um só, versionado em docs/. Empacotar uma cópia
-    // seria a segunda fonte de verdade a divergir.
-    sourceSets["main"].assets.srcDir(rootProject.file("docs"))
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

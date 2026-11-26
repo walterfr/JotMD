@@ -158,11 +158,9 @@ fun main(args: Array<String>) = application {
         true
     }
 
-    val bundledRefText = remember { loadBundledReferenceDoc() }
     val startupState = remember {
         val mgr = DesktopTabManager()
         var initialRootDir: Path? = null
-        var initialRefTabId: Long? = null
         val startupPaths = resolveStartupPaths(args)
 
         if (startupPaths.isNotEmpty()) {
@@ -191,16 +189,14 @@ fun main(args: Array<String>) = application {
         }
 
         if (mgr.tabs.isEmpty()) {
-            val refTab = mgr.openInitial("typora-ref.md", bundledRefText)
-            initialRefTabId = refTab.id
+            mgr.newEmptyTab(title = stringsFor(initialSession.prefs.language).untitled)
         }
         mgr.tabs.forEach { it.editorState.applyPreferences(initialSession.prefs) }
-        Triple(mgr, initialRootDir, initialRefTabId)
+        mgr to initialRootDir
     }
 
     val tabManager = startupState.first
     var rootDir by remember { mutableStateOf(startupState.second) }
-    val initialRefTabId = startupState.third
 
     val scope = rememberCoroutineScope()
     var saveAction by remember { mutableStateOf<() -> Unit>({}) }
@@ -215,14 +211,14 @@ fun main(args: Array<String>) = application {
     val active = tabManager.activeTab
     val dirtyMark = if (active?.isDirty == true) "*" else ""
 
-    fun isUnmodifiedInitialRef(tab: DesktopTab): Boolean =
-        tab.id == initialRefTabId && tab.draftId == null && tab.editorState.text() == bundledRefText
-
     fun persistTabDraft(tab: DesktopTab) {
         if (tab.file != null) return
         val content = tab.editorState.text()
-        if (isUnmodifiedInitialRef(tab) || content.isBlank()) {
-            tab.draftId?.let { id -> configStore.drafts.deleteDraft(id) }
+        if (content.isBlank()) {
+            tab.draftId?.let { id ->
+                configStore.drafts.deleteDraft(id)
+                tab.draftId = null
+            }
             return
         }
         val id = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also { tab.draftId = it }
@@ -2303,12 +2299,6 @@ private fun TabStrip(
             }
         }
     }
-}
-
-private fun loadBundledReferenceDoc(): String {
-    val stream = Thread.currentThread().contextClassLoader?.getResourceAsStream("typora-ref.md")
-        ?: return ""
-    return stream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
 }
 
 private fun openExternalUri(uri: String) {

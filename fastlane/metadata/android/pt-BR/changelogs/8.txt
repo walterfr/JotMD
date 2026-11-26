@@ -1,0 +1,3 @@
+- Inicia Android e Desktop em uma nota limpa em branco em vez do documento de testes
+- Preserva abas abertas, edicoes e cursor ao girar a tela no Android
+- Persiste e restaura abas SAF abertas e a aba ativa ao reabrir o app

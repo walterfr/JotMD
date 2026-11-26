@@ -119,7 +119,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 private const val AUTOSAVE_DELAY_MS = 1000L
-private const val ASSET_REF_KEY = "asset://typora-ref.md"
 
 /**
  * OpenDocument pede leitura E escrita persistentes na própria intent. Sem os
@@ -247,8 +246,8 @@ class MainActivity : ComponentActivity() {
  * navegam, Ctrl+Z/Ctrl+Shift+Z desfazem — ver BlockEditor.kt.
  *
  * Autosave: 1s depois da última mudança, e de novo ao sair do app (ON_STOP).
- * Só grava arquivo aberto por SAF — o documento de referência embutido nos
- * assets não tem onde gravar. Falha de escrita aparece no cabeçalho.
+ * Grava arquivos abertos por SAF e rascunhos locais das abas sem arquivo.
+ * Falha de escrita aparece no cabeçalho.
  */
 @Composable
 private fun EditorHostScreen(
@@ -262,7 +261,7 @@ private fun EditorHostScreen(
     val isDark = prefsState.themePreset.isDark
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val tabManager = remember { TabManager(initialTitle = "typora-ref.md", initialKey = ASSET_REF_KEY) }
+    val tabManager = remember { TabManager(initialTitle = s.untitled, initialText = "", initialKey = null) }
     val draftRepo = remember(context) { DraftRepository(context.filesDir.toPath().resolve("drafts")) }
     val activeTab = tabManager.activeTab
     val listStates = remember { mutableMapOf<Long, LazyListState>() }
@@ -272,6 +271,22 @@ private fun EditorHostScreen(
     var showWordCountDialog by remember { mutableStateOf(false) }
     var showPrefsDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var sessionRestored by remember { mutableStateOf(false) }
+    var openedExternally by remember { mutableStateOf(false) }
+
+    fun sessionTabKey(tab: EditorTab): String? = tab.key ?: tab.draftId?.let { "draft:$it" }
+
+    fun persistSessionTabs() {
+        val snapshot = if (prefsState.restoreSession) {
+            AndroidSessionTabs(
+                openUris = tabManager.tabs.mapNotNull { it.key },
+                activeKey = sessionTabKey(tabManager.activeTab),
+            )
+        } else {
+            AndroidSessionTabs()
+        }
+        saveAndroidSessionTabs(prefs, snapshot)
+    }
 
     LaunchedEffect(prefsState, activeTab.id, tabManager.tabs.size) {
         for (tab in tabManager.tabs) {
@@ -280,19 +295,29 @@ private fun EditorHostScreen(
     }
 
     LaunchedEffect(Unit) {
-        val text = withContext(Dispatchers.IO) {
-            context.assets.open("typora-ref.md").bufferedReader().use { it.readText() }
-        }
-        val initial = tabManager.tabs.firstOrNull { it.key == ASSET_REF_KEY }
-        if (initial != null && initial.editorState.text().isEmpty()) {
-            initial.editorState.load(text)
-            initial.editorState.applyPreferences(prefsState)
-        }
-        if (prefsState.restoreSession) {
-            val drafts = withContext(Dispatchers.IO) { draftRepo.loadDrafts() }
-            if (drafts.isNotEmpty()) {
-                val activeBefore = tabManager.activeTabId
-                val hadExternalTab = tabManager.activeTab.key != ASSET_REF_KEY
+        try {
+            if (prefsState.restoreSession) {
+                val saved = loadAndroidSessionTabs(prefs)
+                for (uriStr in saved.openUris) {
+                    val uri = runCatching { Uri.parse(uriStr) }.getOrNull() ?: continue
+                    val loaded = withContext(Dispatchers.IO) {
+                        val content = runCatching {
+                            context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        }.getOrNull() ?: return@withContext null
+                        val name = displayName(context.contentResolver, uri) ?: s.untitled
+                        name to content
+                    } ?: continue
+                    val newSession = FileSession(context.contentResolver, uri, lastSaved = loaded.second)
+                    val created = tabManager.openOrFocus(
+                        key = uriStr,
+                        title = loaded.first,
+                        text = loaded.second,
+                        session = newSession,
+                        replaceInitialBlank = true,
+                    )
+                    created.editorState.applyPreferences(prefsState)
+                }
+                val drafts = withContext(Dispatchers.IO) { draftRepo.loadDrafts() }
                 for (d in drafts.reversed()) {
                     if (tabManager.tabs.none { it.draftId == d.id }) {
                         val created = tabManager.openOrFocus(
@@ -300,14 +325,32 @@ private fun EditorHostScreen(
                             title = d.title.ifBlank { s.untitled },
                             text = d.content,
                             draftId = d.id,
+                            replaceInitialBlank = true,
                         )
                         created.editorState.applyPreferences(prefsState)
                     }
                 }
-                if (hadExternalTab) {
-                    tabManager.select(activeBefore)
+                val targetKey = saved.activeKey
+                if (!openedExternally && targetKey != null) {
+                    val match = tabManager.tabs.firstOrNull { sessionTabKey(it) == targetKey }
+                    if (match != null) {
+                        tabManager.select(match.id)
+                    }
                 }
             }
+        } finally {
+            sessionRestored = true
+        }
+    }
+
+    LaunchedEffect(
+        sessionRestored,
+        prefsState.restoreSession,
+        tabManager.tabs.map { it.id to it.draftId },
+        activeTab.id,
+    ) {
+        if (sessionRestored) {
+            persistSessionTabs()
         }
     }
 
@@ -318,16 +361,16 @@ private fun EditorHostScreen(
             tabManager.updateSaveState(tab.id, failed)
             return !failed
         }
-        if (tab.key != ASSET_REF_KEY) {
-            val text = tab.editorState.text()
-            if (text.isNotBlank()) {
-                val draftId = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also {
-                    tabManager.updateDraftId(tab.id, it)
-                }
-                runCatching { draftRepo.saveDraft(draftId, tab.title, text) }
-            } else if (tab.draftId != null) {
-                runCatching { draftRepo.deleteDraft(tab.draftId) }
+        val text = tab.editorState.text()
+        if (text.isNotBlank()) {
+            val draftId = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also {
+                tabManager.updateDraftId(tab.id, it)
             }
+            runCatching { draftRepo.saveDraft(draftId, tab.title, text) }
+        } else if (tab.draftId != null) {
+            val oldDraftId = tab.draftId
+            runCatching { draftRepo.deleteDraft(oldDraftId) }
+            tabManager.updateDraftId(tab.id, null)
         }
         return true
     }
@@ -340,16 +383,16 @@ private fun EditorHostScreen(
             tabManager.updateSaveState(tab.id, failed)
             return !failed
         }
-        if (tab.key != ASSET_REF_KEY) {
-            val text = tab.editorState.text()
-            if (text.isNotBlank()) {
-                val draftId = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also {
-                    tabManager.updateDraftId(tab.id, it)
-                }
-                withContext(Dispatchers.IO) { runCatching { draftRepo.saveDraft(draftId, tab.title, text) } }
-            } else if (tab.draftId != null) {
-                withContext(Dispatchers.IO) { runCatching { draftRepo.deleteDraft(tab.draftId) } }
+        val text = tab.editorState.text()
+        if (text.isNotBlank()) {
+            val draftId = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also {
+                tabManager.updateDraftId(tab.id, it)
             }
+            withContext(Dispatchers.IO) { runCatching { draftRepo.saveDraft(draftId, tab.title, text) } }
+        } else if (tab.draftId != null) {
+            val oldDraftId = tab.draftId
+            withContext(Dispatchers.IO) { runCatching { draftRepo.deleteDraft(oldDraftId) } }
+            tabManager.updateDraftId(tab.id, null)
         }
         return true
     }
@@ -362,7 +405,7 @@ private fun EditorHostScreen(
             val text = activeTab.editorState.text()
             val failed = runCatching { withContext(Dispatchers.IO) { session.saveIfChanged(text) } }.isFailure
             tabManager.updateSaveState(activeTab.id, failed)
-        } else if (activeTab.key != ASSET_REF_KEY) {
+        } else {
             delay(AUTOSAVE_DELAY_MS)
             val text = activeTab.editorState.text()
             if (text.isNotBlank()) {
@@ -377,6 +420,7 @@ private fun EditorHostScreen(
                 withContext(Dispatchers.IO) {
                     runCatching { draftRepo.deleteDraft(oldDraftId) }
                 }
+                tabManager.updateDraftId(activeTab.id, null)
             }
         }
     }
@@ -403,6 +447,7 @@ private fun EditorHostScreen(
                 for (tab in tabManager.tabs.toList()) {
                     flushTab(tab)
                 }
+                persistSessionTabs()
             }
         }
         lifecycle.addObserver(observer)
@@ -535,7 +580,12 @@ private fun EditorHostScreen(
                 notice = s.importError
             } else if (flushTab(tabManager.activeTab)) {
                 val mdTitle = suggestedMarkdownTitle(name)
-                val created = tabManager.openOrFocus(key = null, title = mdTitle, text = imported)
+                val created = tabManager.openOrFocus(
+                    key = null,
+                    title = mdTitle,
+                    text = imported,
+                    replaceInitialBlank = true,
+                )
                 created.editorState.applyPreferences(prefsState)
                 notice = "${s.importedNotice}: $mdTitle"
             }
@@ -572,7 +622,7 @@ private fun EditorHostScreen(
             // Não troca de arquivo se o anterior não gravou — senão o erro some da vista.
             if (!flushTab(tabManager.activeTab)) return@launch
             val newSession = FileSession(context.contentResolver, uri, lastSaved = text)
-            val created = tabManager.openOrFocus(key, name, text, newSession)
+            val created = tabManager.openOrFocus(key, name, text, newSession, replaceInitialBlank = true)
             created.editorState.applyPreferences(prefsState)
             notice = null
         }
@@ -584,6 +634,7 @@ private fun EditorHostScreen(
             val action = withContext(Dispatchers.IO) {
                 extractIncomingAction(event.payload, context.contentResolver)
             } ?: return@LaunchedEffect
+            openedExternally = true
             when (action) {
                 is IncomingAction.OpenMarkdownUri -> {
                     runCatching {
@@ -605,14 +656,24 @@ private fun EditorHostScreen(
                         notice = s.importError
                     } else if (flushTab(tabManager.activeTab)) {
                         val mdTitle = suggestedMarkdownTitle(action.suggestedName)
-                        val created = tabManager.openOrFocus(key = null, title = mdTitle, text = imported)
+                        val created = tabManager.openOrFocus(
+                            key = null,
+                            title = mdTitle,
+                            text = imported,
+                            replaceInitialBlank = true,
+                        )
                         created.editorState.applyPreferences(prefsState)
                         notice = "${s.importedNotice}: $mdTitle"
                     }
                 }
                 is IncomingAction.SharedText -> {
                     if (flushTab(tabManager.activeTab)) {
-                        val created = tabManager.openOrFocus(key = null, title = action.title, text = action.text)
+                        val created = tabManager.openOrFocus(
+                            key = null,
+                            title = action.title,
+                            text = action.text,
+                            replaceInitialBlank = true,
+                        )
                         created.editorState.applyPreferences(prefsState)
                         notice = null
                     }
@@ -1173,6 +1234,7 @@ private fun EditorHostScreen(
                                                     title = d.title.ifBlank { s.untitled },
                                                     text = d.content,
                                                     draftId = d.id,
+                                                    replaceInitialBlank = true,
                                                 )
                                                 created.editorState.applyPreferences(prefsState)
                                                 recoveredCount++

@@ -201,4 +201,44 @@ class TabManagerTest {
         tm.updateDraftId(9999L, "ignored")
         assertEquals("draft-1", tm.tabs.first { it.id == recovered.id }.draftId)
     }
+
+    @Test
+    fun `default inicial e Sem Titulo vazia e openOrFocus substitui quando intacta`() {
+        val tm = TabManager()
+        assertEquals(1, tm.tabs.size)
+        assertEquals("Sem Título", tm.activeTab.title)
+        assertNull(tm.activeTab.key)
+        assertEquals("", tm.activeTab.editorState.text())
+        assertTrue(tm.isUntouchedBlankTab(tm.activeTab))
+
+        val opened = tm.openOrFocus(
+            key = "content://doc/1",
+            title = "nota.md",
+            text = "# Nota\n",
+            replaceInitialBlank = true,
+        )
+        assertEquals(1, tm.tabs.size)
+        assertEquals(opened.id, tm.activeTabId)
+        assertEquals("nota.md", tm.activeTab.title)
+        assertFalse(tm.isUntouchedBlankTab(opened))
+    }
+
+    @Test
+    fun `openOrFocus com replaceInitialBlank preserva aba inicial se ja editada`() {
+        val tm = TabManager()
+        val first = tm.activeTab
+        first.editorState.load("rascunho")
+        assertFalse(tm.isUntouchedBlankTab(first))
+
+        val opened = tm.openOrFocus(
+            key = "content://doc/2",
+            title = "outra.md",
+            text = "dois\n",
+            replaceInitialBlank = true,
+        )
+        assertEquals(2, tm.tabs.size)
+        assertEquals(first.id, tm.tabs[0].id)
+        assertEquals(opened.id, tm.tabs[1].id)
+        assertEquals(opened.id, tm.activeTabId)
+    }
 }

@@ -13,9 +13,6 @@ kotlin {
     sourceSets["main"].kotlin.srcDir(rootProject.file("editor/src/main/kotlin"))
 }
 
-// Reusa o documento de referência de docs/ sem duplicar arquivo.
-sourceSets["main"].resources.srcDir(rootProject.file("docs"))
-
 dependencies {
     implementation(project(":core-md"))
     implementation(compose.desktop.currentOs)
@@ -24,7 +21,7 @@ dependencies {
 }
 
 val desktopPackageVersionRaw = (findProperty("desktopPackageVersion") as String?)?.trim().orEmpty()
-val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.4.1"
+val desktopPackageVersion = Regex("""\d+\.\d+\.\d+""").find(desktopPackageVersionRaw)?.value ?: "0.4.2"
 
 compose.desktop {
     application {

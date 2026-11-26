@@ -160,6 +160,11 @@ Concluído em `v0.4.1` (`versionCode 7`):
 - Correção de `LaunchedEffect(incomingEvent)` em `MainActivity.kt` consumindo o intent apenas no bloco `finally` após `withContext(Dispatchers.IO)`, adicionando `IncomingIntentEvent`/`consumeIncomingEvent` em `ExternalIntents.kt`.
 - `.imePadding()` em `ModalDrawerSheet` e `keyboardController?.hide()` ao abrir a gaveta lateral no Android para manter o rodapé de Contagem de Palavras visível acima do teclado virtual, além de `phoneScreenshots/` em retrato (`800x1280`).
 
+Concluído em `v0.4.2` (`versionCode 8`):
+
+- Inicialização em nota em branco limpa no Android e no Desktop (removido carregamento/empacotamento automático de `typora-ref.md` no runtime).
+- `android:configChanges` em `MainActivity` no `AndroidManifest.xml` para preservar abas, texto, cursor e scroll na rotação do aparelho, além da persistência e restauração das abas SAF e aba ativa via `SharedPreferences` (`AndroidSessionTabs`).
+
 Pendente:
 
 - Abrir Merge Request no `fdroiddata` copiando `fdroid/io.github.walterfr.jotmd.yml`

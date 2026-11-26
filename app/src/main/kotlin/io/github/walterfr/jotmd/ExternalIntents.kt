@@ -19,6 +19,8 @@ private const val PREF_AUTO_PAIR = "auto_pair"
 private const val PREF_INDENT_SIZE = "indent_size"
 private const val PREF_LANGUAGE = "language"
 private const val PREF_RESTORE_SESSION = "restore_session"
+private const val PREF_OPEN_TABS = "open_tab_uris"
+private const val PREF_ACTIVE_TAB_KEY = "active_tab_key"
 
 private val MARKDOWN_EXTENSIONS = setOf("md", "markdown", "mmd", "mkd", "mdown", "txt")
 private val IMPORTABLE_EXTENSIONS = setOf("html", "htm", "xhtml", "docx", "epub")
@@ -170,5 +172,44 @@ fun saveAndroidPrefs(prefs: SharedPreferences, value: EditorPrefs) {
         .putInt(PREF_INDENT_SIZE, normalized.indentSize)
         .putString(PREF_LANGUAGE, normalized.language.id)
         .putBoolean(PREF_RESTORE_SESSION, normalized.restoreSession)
+        .apply()
+}
+
+data class AndroidSessionTabs(
+    val openUris: List<String> = emptyList(),
+    val activeKey: String? = null,
+)
+
+fun encodeSessionUris(uris: List<String>): String =
+    uris.asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .joinToString("\n")
+
+fun decodeSessionUris(raw: String?): List<String> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return raw.lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .toList()
+}
+
+fun loadAndroidSessionTabs(prefs: SharedPreferences): AndroidSessionTabs {
+    val openUris = decodeSessionUris(runCatching { prefs.getString(PREF_OPEN_TABS, null) }.getOrNull())
+    val activeKey = runCatching { prefs.getString(PREF_ACTIVE_TAB_KEY, null) }
+        .getOrNull()
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+    return AndroidSessionTabs(openUris = openUris, activeKey = activeKey)
+}
+
+fun saveAndroidSessionTabs(prefs: SharedPreferences, session: AndroidSessionTabs) {
+    val encoded = encodeSessionUris(session.openUris)
+    val active = session.activeKey?.trim()?.takeIf { it.isNotEmpty() }
+    prefs.edit()
+        .putString(PREF_OPEN_TABS, encoded)
+        .putString(PREF_ACTIVE_TAB_KEY, active)
         .apply()
 }

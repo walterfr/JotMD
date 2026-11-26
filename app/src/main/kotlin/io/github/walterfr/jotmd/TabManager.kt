@@ -30,7 +30,7 @@ data class EditorTab(
  * referência opaca a [FileSession] nula nos testes) para rodar em JVM puro.
  */
 class TabManager(
-    initialTitle: String = "typora-ref.md",
+    initialTitle: String = "Sem Título",
     initialText: String = "",
     initialKey: String? = null,
 ) {
@@ -53,9 +53,14 @@ class TabManager(
     val activeTab: EditorTab
         get() = _tabs.first { it.id == activeTabId }
 
+    fun isUntouchedBlankTab(tab: EditorTab): Boolean =
+        tab.key == null && tab.session == null && tab.draftId == null && tab.editorState.text().isEmpty()
+
     /**
      * Foca a aba existente com [key] (preservando [EditorState], edição e undo)
-     * ou abre uma nova aba no fim e a torna ativa.
+     * ou abre uma nova aba no fim e a torna ativa. Quando [replaceInitialBlank]
+     * é verdadeiro e há apenas uma aba inicial vazia intacta, substitui-a em vez
+     * de manter uma aba em branco sobrando.
      */
     fun openOrFocus(
         key: String?,
@@ -63,6 +68,7 @@ class TabManager(
         text: String,
         session: FileSession? = null,
         draftId: String? = null,
+        replaceInitialBlank: Boolean = false,
     ): EditorTab {
         if (key != null) {
             val idx = _tabs.indexOfFirst { it.key == key }
@@ -88,7 +94,15 @@ class TabManager(
             session = session,
             draftId = draftId,
         )
-        _tabs.add(created)
+        if (replaceInitialBlank &&
+            _tabs.size == 1 &&
+            isUntouchedBlankTab(_tabs[0]) &&
+            (key != null || draftId != null || text.isNotEmpty())
+        ) {
+            _tabs[0] = created
+        } else {
+            _tabs.add(created)
+        }
         activeTabId = created.id
         return created
     }

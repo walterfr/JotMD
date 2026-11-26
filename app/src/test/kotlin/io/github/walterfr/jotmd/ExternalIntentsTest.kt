@@ -80,4 +80,26 @@ class ExternalIntentsTest {
         assertEquals(newer, consumeIncomingEvent(newer, handledSeq = 1L))
         assertEquals(null, consumeIncomingEvent<String>(null, handledSeq = 1L))
     }
+
+    @Test fun encodeAndDecodeSessionUrisPreserveOrderAndDeduplicate() {
+        val raw = encodeSessionUris(
+            listOf(
+                " content://com.android.externalstorage/doc/1 ",
+                "",
+                "content://com.android.externalstorage/doc/2",
+                "content://com.android.externalstorage/doc/1",
+                "content://com.android.externalstorage/doc/3\r",
+            ),
+        )
+        assertEquals(
+            listOf(
+                "content://com.android.externalstorage/doc/1",
+                "content://com.android.externalstorage/doc/2",
+                "content://com.android.externalstorage/doc/3",
+            ),
+            decodeSessionUris(raw),
+        )
+        assertEquals(emptyList(), decodeSessionUris(null))
+        assertEquals(emptyList(), decodeSessionUris(" \n  \n "))
+    }
 }
