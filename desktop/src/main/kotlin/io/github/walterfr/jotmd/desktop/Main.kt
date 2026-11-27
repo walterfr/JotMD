@@ -81,6 +81,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.walterfr.jotmd.core.OutlineEntry
+import io.github.walterfr.jotmd.core.SelectionStats
 import io.github.walterfr.jotmd.core.docRefsOf
 import io.github.walterfr.jotmd.core.docStatsOf
 import io.github.walterfr.jotmd.core.exportToHtml
@@ -88,6 +89,7 @@ import io.github.walterfr.jotmd.core.exportToPdf
 import io.github.walterfr.jotmd.core.findInDocument
 import io.github.walterfr.jotmd.core.isValidSearchRegex
 import io.github.walterfr.jotmd.core.outlineOf
+import io.github.walterfr.jotmd.core.selectionStatsOf
 import io.github.walterfr.jotmd.core.writeTextAtomic
 import io.github.walterfr.jotmd.editor.AppLanguage
 import io.github.walterfr.jotmd.editor.DarkMdPalette
@@ -975,8 +977,16 @@ private fun DesktopShell(
             val stats = remember(activeTab.id, activeTab.editorState.doc) {
                 docStatsOf(activeTab.editorState.doc)
             }
+            val selectionStats = remember(
+                activeTab.id,
+                activeTab.editorState.editValue.selection,
+                activeTab.editorState.editValue.text,
+            ) {
+                activeTab.editorState.selectedText().takeIf { it.isNotEmpty() }?.let(::selectionStatsOf)
+            }
             WordCountModal(
                 stats = stats,
+                selectionStats = selectionStats,
                 onDismiss = { showWordCountModal = false },
             )
         }
@@ -1802,6 +1812,7 @@ private fun DesktopFooterBar(
 @Composable
 private fun WordCountModal(
     stats: io.github.walterfr.jotmd.core.DocStats,
+    selectionStats: SelectionStats?,
     onDismiss: () -> Unit,
 ) {
     val s = LocalJotStrings.current
@@ -1845,6 +1856,17 @@ private fun WordCountModal(
                 WordCountRow(label = s.lines, value = stats.lines.toString())
                 WordCountRow(label = s.words, value = stats.words.toString())
                 WordCountRow(label = s.characters, value = stats.chars.toString())
+                if (selectionStats != null) {
+                    HorizontalDivider(color = MdTokens.tableBorder)
+                    Text(
+                        text = s.inSelection,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MdTokens.text,
+                    )
+                    WordCountRow(label = s.words, value = selectionStats.words.toString())
+                    WordCountRow(label = s.characters, value = selectionStats.chars.toString())
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text(s.close) }
                 }

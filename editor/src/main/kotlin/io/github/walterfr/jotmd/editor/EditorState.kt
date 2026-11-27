@@ -256,6 +256,17 @@ class EditorState(initialText: String = "") {
         if (focusedId == id) focusedId = null
     }
 
+    /** Texto selecionado no bloco focado (lidando com seleção invertida), ou `""` sem seleção. */
+    fun selectedText(): String {
+        if (focusedId == null) return ""
+        val range = editValue.selection
+        if (range.collapsed) return ""
+        val text = editValue.text
+        val start = minOf(range.start, range.end).coerceIn(0, text.length)
+        val end = maxOf(range.start, range.end).coerceIn(start, text.length)
+        return text.substring(start, end)
+    }
+
     /** Envolve a seleção atual do bloco focado com [prefix]/[suffix]. Sem bloco focado, não faz nada. */
     fun wrapSelection(prefix: String, suffix: String = prefix) {
         if (focusedId == null) return
@@ -271,6 +282,75 @@ class EditorState(initialText: String = "") {
             selection = TextRange(range.start + prefix.length, range.end + prefix.length),
         )
         syncDocFromEdit()
+    }
+
+    /**
+     * Alterna o nível de título da linha ativa no ciclo `"" -> "# " -> "## " -> "### " -> ""`
+     * (removendo qualquer marcador `#{1,6}` existente) e atualiza o tipo do bloco sem perder o foco.
+     */
+    fun cycleHeadingLevel(): Boolean = transformActiveLine { line ->
+        val match = HEADING_MARKER_REGEX.find(line)
+        val markerLen = match?.value?.length ?: 0
+        val level = match?.groupValues?.get(1)?.length ?: 0
+        val nextPrefix = when (level) {
+            0 -> "# "
+            1 -> "## "
+            2 -> "### "
+            else -> ""
+        }
+        ActiveLineEdit(localEditOffset = 0, removeLen = markerLen, insert = nextPrefix)
+    }
+
+    /**
+     * Alterna prefixo de linha (`"- "`, `"- [ ] "`, `"> "`) na linha ativa preservando
+     * indentação inicial, removendo marcador conflitante e atualizando o tipo do bloco.
+     */
+    fun toggleLinePrefix(prefix: String): Boolean {
+        if (prefix.isEmpty()) return false
+        return transformActiveLine { line ->
+            val indentLen = line.indexOfFirst { it != ' ' && it != '\t' }.let { if (it < 0) line.length else it }
+            val body = line.substring(indentLen)
+            val (removeLen, insert) = when {
+                body.startsWith(prefix) -> prefix.length to ""
+                prefix == "- [ ] " && TASK_MARKER_REGEX.containsMatchIn(body) ->
+                    TASK_MARKER_REGEX.find(body)!!.value.length to ""
+                else -> {
+                    val conflict = TASK_MARKER_REGEX.find(body)
+                        ?: BULLET_MARKER_REGEX.find(body)
+                        ?: ORDERED_MARKER_REGEX.find(body)
+                        ?: QUOTE_MARKER_REGEX.find(body)
+                    (conflict?.value?.length ?: 0) to prefix
+                }
+            }
+            ActiveLineEdit(localEditOffset = indentLen, removeLen = removeLen, insert = insert)
+        }
+    }
+
+    /**
+     * Insere link Markdown no bloco focado: envolve a seleção como `[seleção]()` com o cursor
+     * dentro de `()`, ou insere `[]()` com o cursor dentro de `[]` quando não há seleção.
+     */
+    fun insertLink(): Boolean {
+        if (focusedId == null) return false
+        recordUndoCheckpoint()
+        val value = editValue
+        val text = value.text
+        val start = minOf(value.selection.start, value.selection.end).coerceIn(0, text.length)
+        val end = maxOf(value.selection.start, value.selection.end).coerceIn(start, text.length)
+        val selected = text.substring(start, end)
+        val newText: String
+        val cursor: Int
+        if (selected.isNotEmpty()) {
+            newText = text.substring(0, start) + "[" + selected + "]()" + text.substring(end)
+            cursor = start + selected.length + 3
+        } else {
+            newText = text.substring(0, start) + "[]()" + text.substring(end)
+            cursor = start + 1
+        }
+        editValue = TextFieldValue(newText, TextRange(cursor))
+        clearStaleEcho()
+        syncDocFromEdit()
+        return true
     }
 
     /** Enter no cursor: divide o bloco focado em dois e reparseia a cauda (Armadilha 1). */
@@ -940,5 +1020,74 @@ class EditorState(initialText: String = "") {
         doc = doc.copy(
             blocks = doc.blocks.map { if (it.id == id) it.copy(source = editValue.text) else it },
         )
+    }
+
+    private data class ActiveLineEdit(
+        val localEditOffset: Int,
+        val removeLen: Int,
+        val insert: String,
+    )
+
+    private fun transformActiveLine(compute: (line: String) -> ActiveLineEdit): Boolean {
+        val id = focusedId ?: return false
+        val index = doc.blocks.indexOfFirst { it.id == id }
+        if (index < 0) return false
+        val block = doc.blocks[index]
+        if (block.type == BlockType.CODE_FENCE || block.type == BlockType.FRONT_MATTER) return false
+
+        val text = editValue.text
+        val cursor = editValue.selection.start.coerceIn(0, text.length)
+        val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
+        val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+        val line = text.substring(lineStart, lineEnd)
+
+        val lineEdit = compute(line)
+        val editOffset = lineStart + lineEdit.localEditOffset
+        val newText = text.substring(0, editOffset) +
+            lineEdit.insert +
+            text.substring(editOffset + lineEdit.removeLen)
+
+        val delta = lineEdit.insert.length - lineEdit.removeLen
+        fun adjust(pos: Int): Int {
+            val clamped = pos.coerceIn(0, text.length)
+            return when {
+                clamped < editOffset -> clamped
+                clamped <= editOffset + lineEdit.removeLen -> editOffset + lineEdit.insert.length
+                else -> clamped + delta
+            }.coerceIn(0, newText.length)
+        }
+        val newStart = adjust(editValue.selection.start)
+        val newEnd = adjust(editValue.selection.end)
+
+        recordUndoCheckpoint()
+        editValue = TextFieldValue(newText, TextRange(newStart, newEnd))
+        clearStaleEcho()
+        syncDocFromEdit()
+
+        val parsed = if (newText.isBlank()) emptyList() else parse(newText, frontMatter = false).blocks
+        if (parsed.size <= 1) {
+            val newType = parsed.firstOrNull()?.type ?: BlockType.PARAGRAPH
+            if (newType != block.type) {
+                doc = doc.copy(
+                    blocks = doc.blocks.mapIndexed { i, b -> if (i == index) b.copy(type = newType) else b },
+                )
+            }
+        } else {
+            val reparsed = reparse(doc.blocks, index, ids)
+            if (reparsed.isNotEmpty()) {
+                doc = doc.copy(blocks = reparsed)
+                focusAtOffset(reparsed, index, newStart)
+                clearStaleEcho()
+            }
+        }
+        return true
+    }
+
+    private companion object {
+        val HEADING_MARKER_REGEX = Regex("""^[ \t]*(#{1,6})[^\S\r\n]+""")
+        val TASK_MARKER_REGEX = Regex("""^[-*+] \[[ xX]] """)
+        val BULLET_MARKER_REGEX = Regex("""^[-*+] """)
+        val ORDERED_MARKER_REGEX = Regex("""^\d{1,9}[.)] """)
+        val QUOTE_MARKER_REGEX = Regex("""^(?:>[^\S\r\n]?)+""")
     }
 }

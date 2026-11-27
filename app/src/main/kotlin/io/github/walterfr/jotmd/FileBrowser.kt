@@ -23,20 +23,68 @@ fun isMarkdownName(name: String): Boolean {
 }
 
 /**
- * Arquivo apontado por `[[target]]`: nome sem extensão igual ao alvo, sem
- * diferenciar caixa. `[[pasta/nota]]` usa só o último segmento e `[[nota.md]]`
- * também vale.
- *
- * ponytail: dois arquivos com o mesmo nome em pastas diferentes → vence o
- * primeiro da listagem. Upgrade: casar o caminho relativo quando o alvo tiver `/`.
+ * Arquivo apontado por `[[target]]`: ignora âncora `#seção`, normaliza `\` -> `/`
+ * e resolve o caminho relativo reconstruído na árvore.
+ * - Com `/`: prioriza caminho relativo exato (com ou sem `.md`/`.markdown`,
+ *   sem diferenciar caixa), depois sufixo `/<target>` (menor profundidade) e,
+ *   por fim, nome de arquivo.
+ * - Sem `/`: casa o nome do arquivo (com ou sem `.md`/`.markdown`) e escolhe
+ *   o resultado mais raso (`depth` menor, mantendo o primeiro em empate).
  */
 fun resolveWikilink(target: String, nodes: List<DocNode>): DocNode? {
-    val wanted = target.substringAfterLast('/').trim()
-    return nodes.firstOrNull { node ->
-        !node.isDir && (
-            node.name.equals(wanted, ignoreCase = true) ||
-                node.name.substringBeforeLast('.').equals(wanted, ignoreCase = true)
-            )
+    val normalized = target.substringBefore('#')
+        .trim()
+        .replace('\\', '/')
+        .trimStart('/')
+    if (normalized.isEmpty()) return null
+
+    data class FileEntry(val node: DocNode, val relativePath: String)
+
+    val stack = ArrayList<String>()
+    val files = ArrayList<FileEntry>()
+    for (node in nodes) {
+        val safeDepth = node.depth.coerceAtLeast(0)
+        while (stack.size > safeDepth) {
+            stack.removeAt(stack.lastIndex)
+        }
+        if (node.isDir) {
+            stack.add(node.name)
+        } else {
+            val relPath = if (stack.isEmpty()) node.name else "${stack.joinToString("/")}/${node.name}"
+            files += FileEntry(node, relPath)
+        }
+    }
+
+    if (normalized.contains('/')) {
+        files.firstOrNull {
+            it.relativePath.equals(normalized, ignoreCase = true) ||
+                stripMarkdownExtension(it.relativePath).equals(normalized, ignoreCase = true)
+        }?.let { return it.node }
+
+        val suffix = "/$normalized"
+        files.filter {
+            it.relativePath.endsWith(suffix, ignoreCase = true) ||
+                stripMarkdownExtension(it.relativePath).endsWith(suffix, ignoreCase = true)
+        }.minByOrNull { it.node.depth }?.let { return it.node }
+    }
+
+    val wantedName = normalized.substringAfterLast('/')
+    return files.filter {
+        it.node.name.equals(wantedName, ignoreCase = true) ||
+            stripMarkdownExtension(it.node.name).equals(wantedName, ignoreCase = true)
+    }.minByOrNull { it.node.depth }?.node
+}
+
+private fun stripMarkdownExtension(path: String): String {
+    val lower = path.lowercase()
+    return when {
+        lower.endsWith(".md") -> path.dropLast(3)
+        lower.endsWith(".markdown") -> path.dropLast(9)
+        else -> {
+            val slash = path.lastIndexOf('/')
+            val dot = path.lastIndexOf('.')
+            if (dot > slash) path.substring(0, dot) else path
+        }
     }
 }
 

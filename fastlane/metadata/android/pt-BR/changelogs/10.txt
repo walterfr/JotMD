@@ -1,0 +1,4 @@
+- Adiciona Salvar como... no Android via SAF para gravar abas em branco ou importadas em arquivo .md sem perder o historico de desfazer
+- Exibe contagem de palavras e caracteres da selecao no modal Contagem de Palavras (Android e Desktop)
+- Expande barra movel com botoes de titulo (H), lista, tarefa, citacao e Link
+- Ordena busca FTS4 por matchinfo, desambigua wikilinks relativos, faz cache de falhas de imagem e grava ON_STOP em segundo plano

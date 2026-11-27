@@ -16,6 +16,13 @@ data class DocStats(
     val readingTimeMinutes: Int,
 )
 
+/** Estatísticas de extensão do trecho de texto selecionado. */
+data class SelectionStats(
+    val words: Int,
+    val chars: Int,
+    val charsNoSpaces: Int,
+)
+
 /**
  * Calcula estatísticas de [doc] alinhadas ao contador do Typora (`Mod 37`):
  * - exclui `FRONT_MATTER`, `HORIZONTAL_RULE`, `LINK_DEFINITION` e marcadores `[TOC]`;
@@ -57,6 +64,13 @@ fun docStatsOf(doc: DocState, wordsPerMinute: Int = TYPORA_WPM): DocStats {
 /** Atalho que faz [parse] de [text] e calcula [docStatsOf]. */
 fun docStatsOf(text: String, wordsPerMinute: Int = TYPORA_WPM): DocStats =
     docStatsOf(parse(text), wordsPerMinute)
+
+/** Calcula contagem de palavras e caracteres para [selectedText] com as mesmas regras de [docStatsOf]. */
+fun selectionStatsOf(selectedText: String): SelectionStats = SelectionStats(
+    words = countWords(selectedText),
+    chars = selectedText.length,
+    charsNoSpaces = selectedText.count { !it.isWhitespace() },
+)
 
 private fun countableContent(block: Block): String? = when (block.type) {
     BlockType.FRONT_MATTER,

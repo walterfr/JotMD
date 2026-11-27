@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/walterfr/JotMD?label=Release)](https://github.com/walterfr/JotMD/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Pride Versioning](https://img.shields.io/badge/PrideVer-0.4.3-ff69b4)](https://pridever.org/)
+[![Pride Versioning](https://img.shields.io/badge/PrideVer-0.5.0-ff69b4)](https://pridever.org/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1.21-7F52FF.svg)](gradle/libs.versions.toml)
 [![Android](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84.svg)](app/build.gradle.kts)
 [![Windows](https://img.shields.io/badge/Windows-Compose%20Desktop-0078D4.svg)](desktop/build.gradle.kts)
@@ -22,10 +22,10 @@ Baixe os instaladores e checksums (`SHA256SUMS.txt`) na página de [**GitHub Rel
 
 | Plataforma | Artefato | Observação |
 |---|---|---|
-| Android 8.0+ | `jotmd-android-0.4.3.apk` | Assinado via release CI; sem permissões invasivas (`dependenciesInfo` desativado) |
-| Windows (x64) | `jotmd-windows-0.4.3.msi` | Instalador Windows padrão (WiX) com associação `.md` |
-| Windows (x64) | `jotmd-windows-0.4.3-setup.exe` | Instalador executável com associação `.md` |
-| Windows (x64) | `jotmd-windows-0.4.3-portable.zip` | Versão portátil (extraia e execute `JotMD.exe`) |
+| Android 8.0+ | `jotmd-android-0.5.0.apk` | Assinado via release CI; sem permissões invasivas (`dependenciesInfo` desativado) |
+| Windows (x64) | `jotmd-windows-0.5.0.msi` | Instalador Windows padrão (WiX) com associação `.md` |
+| Windows (x64) | `jotmd-windows-0.5.0-setup.exe` | Instalador executável com associação `.md` |
+| Windows (x64) | `jotmd-windows-0.5.0-portable.zip` | Versão portátil (extraia e execute `JotMD.exe`) |
 
 ---
 
@@ -144,7 +144,7 @@ serialize(parse(texto)) == texto   // byte a byte, para qualquer entrada
 ./gradlew :desktop:run
 
 # Empacotar distribuível e instaladores Windows (.msi / .exe / imagem portátil)
-./gradlew :desktop:createDistributable :desktop:packageMsi :desktop:packageExe "-PdesktopPackageVersion=0.4.3"
+./gradlew :desktop:createDistributable :desktop:packageMsi :desktop:packageExe "-PdesktopPackageVersion=0.5.0"
 ```
 
 *(No PowerShell do Windows, use `.\gradlew.bat` e mantenha parâmetros `-P...=...` entre aspas.)*

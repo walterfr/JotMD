@@ -101,4 +101,48 @@ class DocStatsTest {
         val customWpm = docStatsOf("w ".repeat(200).trim(), wordsPerMinute = 100)
         assertEquals(2, customWpm.readingTimeMinutes)
     }
+
+    @Test
+    fun `selectionStatsOf retorna zeros para string vazia`() {
+        assertEquals(
+            SelectionStats(words = 0, chars = 0, charsNoSpaces = 0),
+            selectionStatsOf(""),
+        )
+    }
+
+    @Test
+    fun `selectionStatsOf conta apenas chars brutos para string só com espaços`() {
+        assertEquals(
+            SelectionStats(words = 0, chars = 8, charsNoSpaces = 0),
+            selectionStatsOf("   \n\t\r  "),
+        )
+    }
+
+    @Test
+    fun `selectionStatsOf conta contrações, termos hifenizados e decimais em prosa ASCII`() {
+        assertEquals(
+            SelectionStats(words = 5, chars = 34, charsNoSpaces = 30),
+            selectionStatsOf("don't use quarta-feira v0.1.0, ok!"),
+        )
+        assertEquals(
+            SelectionStats(words = 3, chars = 14, charsNoSpaces = 12),
+            selectionStatsOf("don’t pay 3.14"),
+        )
+    }
+
+    @Test
+    fun `selectionStatsOf conta cada caractere CJK sem contar emojis como palavra`() {
+        assertEquals(
+            SelectionStats(words = 4, chars = 7, charsNoSpaces = 6),
+            selectionStatsOf("Olá 日本語"),
+        )
+        assertEquals(
+            SelectionStats(words = 6, chars = 7, charsNoSpaces = 6),
+            selectionStatsOf("日本語\nテスト"),
+        )
+        assertEquals(
+            SelectionStats(words = 4, chars = 10, charsNoSpaces = 8),
+            selectionStatsOf("Olá 🎉 日本語"),
+        )
+    }
 }

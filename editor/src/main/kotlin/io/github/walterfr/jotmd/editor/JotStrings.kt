@@ -91,6 +91,8 @@ data class JotStrings(
     val noteInFolder: String,
     val quickOpenNothingFound: String,
     val draft: String,
+    val inSelection: String,
+    val savedNotice: String,
     private val replacedSuffix: String,
     private val renameFailedPrefix: String,
 ) {
@@ -192,6 +194,8 @@ val PtBrStrings = JotStrings(
     noteInFolder = "Nota na pasta",
     quickOpenNothingFound = "Nenhuma nota encontrada",
     draft = "Rascunho",
+    inSelection = "Na seleção",
+    savedNotice = "Salvo",
     replacedSuffix = "substituído(s)",
     renameFailedPrefix = "Não foi possível renomear",
 )
@@ -280,6 +284,8 @@ val EnStrings = JotStrings(
     noteInFolder = "Note in folder",
     quickOpenNothingFound = "Nothing found",
     draft = "Draft",
+    inSelection = "In Selection",
+    savedNotice = "Saved",
     replacedSuffix = "replaced",
     renameFailedPrefix = "Could not rename",
 )

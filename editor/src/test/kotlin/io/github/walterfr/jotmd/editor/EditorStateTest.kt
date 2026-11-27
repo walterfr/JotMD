@@ -894,4 +894,158 @@ class EditorStateTest {
         assertEquals(TextRange("segundo".length), s.editValue.selection)
         assertEquals(1, s.focusRequestNonce)
     }
+
+    @Test
+    fun `selectedText devolve trecho selecionado seguro ou vazio sem foco ou seleção`() {
+        val s = EditorState("alfa beta gama\n")
+        assertEquals("", s.selectedText())
+
+        s.focus(s.doc.blocks[0])
+        assertEquals("", s.selectedText()) // cursor colapsado no fim
+
+        s.edit(TextFieldValue("alfa beta gama", TextRange(5, 9)))
+        assertEquals("beta", s.selectedText())
+
+        // Seleção invertida
+        s.edit(TextFieldValue("alfa beta gama", TextRange(9, 5)))
+        assertEquals("beta", s.selectedText())
+    }
+
+    @Test
+    fun `cycleHeadingLevel alterna níveis H1-H3, limpa H4+, mantém foco e suporta undo`() {
+        val noFocus = EditorState("texto\n")
+        assertFalse(noFocus.cycleHeadingLevel())
+
+        val fence = EditorState("```kt\nval x = 1\n```\n")
+        fence.focus(fence.doc.blocks[0])
+        assertFalse(fence.cycleHeadingLevel())
+
+        val fm = EditorState("---\ntitle: a\n---\n")
+        fm.focus(fm.doc.blocks[0])
+        assertFalse(fm.cycleHeadingLevel())
+
+        val s = EditorState("Título\n")
+        val blockId = s.doc.blocks[0].id
+        s.focus(s.doc.blocks[0])
+        s.edit(TextFieldValue("Título", TextRange(3))) // "Tít|ulo"
+
+        assertTrue(s.cycleHeadingLevel())
+        assertEquals("# Título", s.editValue.text)
+        assertEquals(TextRange(5), s.editValue.selection)
+        assertEquals(BlockType.HEADING, s.doc.blocks[0].type)
+        assertEquals(blockId, s.focusedId)
+
+        Thread.sleep(600)
+        assertTrue(s.cycleHeadingLevel())
+        assertEquals("## Título", s.editValue.text)
+        assertEquals(TextRange(6), s.editValue.selection)
+
+        Thread.sleep(600)
+        assertTrue(s.cycleHeadingLevel())
+        assertEquals("### Título", s.editValue.text)
+        assertEquals(TextRange(7), s.editValue.selection)
+
+        Thread.sleep(600)
+        assertTrue(s.cycleHeadingLevel())
+        assertEquals("Título", s.editValue.text)
+        assertEquals(TextRange(3), s.editValue.selection)
+        assertEquals(BlockType.PARAGRAPH, s.doc.blocks[0].type)
+
+        s.undo()
+        assertEquals("### Título", s.doc.blocks[0].source)
+        assertEquals(BlockType.HEADING, s.doc.blocks[0].type)
+
+        // H4+ existente volta para parágrafo sem prefixo
+        val h5 = EditorState("##### Seção\n")
+        h5.focus(h5.doc.blocks[0])
+        h5.edit(TextFieldValue("##### Seção", TextRange(6)))
+        assertTrue(h5.cycleHeadingLevel())
+        assertEquals("Seção", h5.editValue.text)
+        assertEquals(TextRange(0), h5.editValue.selection)
+        assertEquals(BlockType.PARAGRAPH, h5.doc.blocks[0].type)
+    }
+
+    @Test
+    fun `toggleLinePrefix alterna lista, tarefa e citação preservando indentação e undo`() {
+        val noFocus = EditorState("item\n")
+        assertFalse(noFocus.toggleLinePrefix("- "))
+
+        val fence = EditorState("```\nitem\n```\n")
+        fence.focus(fence.doc.blocks[0])
+        assertFalse(fence.toggleLinePrefix("- "))
+
+        val fm = EditorState("---\ntitle: a\n---\n")
+        fm.focus(fm.doc.blocks[0])
+        assertFalse(fm.toggleLinePrefix("> "))
+
+        // Parágrafo com indentação vira lista e volta a parágrafo
+        val s = EditorState("  item\n")
+        val id = s.doc.blocks[0].id
+        s.focus(s.doc.blocks[0])
+        s.edit(TextFieldValue("  item", TextRange(4))) // "  it|em"
+
+        assertTrue(s.toggleLinePrefix("- "))
+        assertEquals("  - item", s.editValue.text)
+        assertEquals(TextRange(6), s.editValue.selection)
+        assertEquals(BlockType.UNORDERED_LIST, s.doc.blocks[0].type)
+        assertEquals(id, s.focusedId)
+
+        // Troca marcador conflitante "- " -> "- [ ] "
+        Thread.sleep(600)
+        assertTrue(s.toggleLinePrefix("- [ ] "))
+        assertEquals("  - [ ] item", s.editValue.text)
+        assertEquals(TextRange(10), s.editValue.selection)
+
+        // Desliga tarefa marcada "- [x] "
+        s.edit(TextFieldValue("  - [x] item", TextRange(8)))
+        Thread.sleep(600)
+        assertTrue(s.toggleLinePrefix("- [ ] "))
+        assertEquals("  item", s.editValue.text)
+        assertEquals(TextRange(2), s.editValue.selection)
+        assertEquals(BlockType.PARAGRAPH, s.doc.blocks[0].type)
+
+        // Substitui lista numerada por citação e depois desliga citação
+        val ord = EditorState("1. item\n")
+        ord.focus(ord.doc.blocks[0])
+        ord.edit(TextFieldValue("1. item", TextRange(5))) // "1. it|em"
+        assertTrue(ord.toggleLinePrefix("> "))
+        assertEquals("> item", ord.editValue.text)
+        assertEquals(TextRange(4), ord.editValue.selection)
+        assertEquals(BlockType.BLOCKQUOTE, ord.doc.blocks[0].type)
+
+        Thread.sleep(600)
+        assertTrue(ord.toggleLinePrefix("> "))
+        assertEquals("item", ord.editValue.text)
+        assertEquals(TextRange(2), ord.editValue.selection)
+        assertEquals(BlockType.PARAGRAPH, ord.doc.blocks[0].type)
+
+        ord.undo()
+        assertEquals("> item", ord.doc.blocks[0].source)
+        assertEquals(BlockType.BLOCKQUOTE, ord.doc.blocks[0].type)
+    }
+
+    @Test
+    fun `insertLink envolve seleção ou insere colchetes vazios com cursor no lugar certo e undo`() {
+        val noFocus = EditorState("texto\n")
+        assertFalse(noFocus.insertLink())
+
+        val s = EditorState("ver docs aqui\n")
+        s.focus(s.doc.blocks[0])
+        s.edit(TextFieldValue("ver docs aqui", TextRange(4, 8))) // "docs"
+        assertTrue(s.insertLink())
+        assertEquals("ver [docs]() aqui", s.editValue.text)
+        assertEquals(TextRange(11), s.editValue.selection) // dentro de () -> 4 + 4 + 3
+        assertEquals("ver [docs]() aqui", s.doc.blocks[0].source)
+
+        s.undo()
+        assertEquals("ver docs aqui", s.doc.blocks[0].source)
+
+        // Seleção vazia insere []() com cursor entre []
+        s.focus(s.doc.blocks[0])
+        s.edit(TextFieldValue("ver docs aqui", TextRange(4)))
+        assertTrue(s.insertLink())
+        assertEquals("ver []()docs aqui", s.editValue.text)
+        assertEquals(TextRange(5), s.editValue.selection) // 4 + 1
+        assertEquals("ver []()docs aqui", s.doc.blocks[0].source)
+    }
 }

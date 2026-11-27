@@ -1,0 +1,4 @@
+- Add Save As... on Android via SAF to bind blank, drafted, or imported tabs to a real .md file without losing undo history
+- Show In Selection word and character counts in the Word Count modal on Android and Desktop
+- Expand mobile editing toolbar with heading cycle (H), list, task checkbox, blockquote, and Link buttons
+- Rank FTS4 folder search by matchinfo, disambiguate relative wikilinks, cache failed image previews, and flush ON_STOP off the main thread

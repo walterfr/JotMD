@@ -86,6 +86,12 @@ class EditorPreferencesAndI18nTest {
         assertEquals("10 words · 50 characters · 1 min", EnStrings.wordCountSummary(10, 50, 1))
         assertEquals("3 substituído(s)", PtBrStrings.replacedCount(3))
         assertEquals("3 replaced", EnStrings.replacedCount(3))
+        assertEquals("Na seleção", PtBrStrings.inSelection)
+        assertEquals("Salvo", PtBrStrings.savedNotice)
+        assertEquals("In Selection", EnStrings.inSelection)
+        assertEquals("Saved", EnStrings.savedNotice)
+        assertTrue(PtBrStrings.inSelection.isNotBlank() && PtBrStrings.savedNotice.isNotBlank())
+        assertTrue(EnStrings.inSelection.isNotBlank() && EnStrings.savedNotice.isNotBlank())
     }
 
     @Test

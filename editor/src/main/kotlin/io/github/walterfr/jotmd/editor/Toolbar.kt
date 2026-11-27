@@ -23,14 +23,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 
 /**
- * Envolve a seleção do bloco focado. Só aparece com algo focado.
- *
- * ponytail: só os cinco wraps mecanicamente idênticos (negrito, itálico,
- * riscado, destaque, código) mais undo/redo. Heading/link/citação/cerca mexem
- * com a linha inteira ou abrem diálogo — ficam pra quando houver UI de diálogo.
- * Undo/redo aqui só aparece com bloco focado (o atalho Ctrl+Z funciona
- * independente disso) — subir pro cabeçalho sempre-visível é mudança pequena,
- * cortada por escopo, não por estar bloqueada em nada.
+ * Barra de formatação inline e de bloco exibida quando há um bloco focado.
+ * Inclui estilos inline, alternância de título/lista/tarefa/citação, link, tabela e undo/redo.
  */
 @Composable
 fun EditorToolbar(state: EditorState, modifier: Modifier = Modifier) {
@@ -51,6 +45,11 @@ fun EditorToolbar(state: EditorState, modifier: Modifier = Modifier) {
             TextStyle(background = MdTokens.highlightBackground, color = MdTokens.highlightText),
         ) { state.wrapSelection("==") }
         ToolbarButton("<>", TextStyle(fontFamily = FontFamily.Monospace)) { state.wrapSelection("`") }
+        ToolbarButton("H", TextStyle(fontWeight = FontWeight.Bold)) { state.cycleHeadingLevel() }
+        ToolbarButton("•", TextStyle()) { state.toggleLinePrefix("- ") }
+        ToolbarButton("☐", TextStyle()) { state.toggleLinePrefix("- [ ] ") }
+        ToolbarButton(">", TextStyle(fontFamily = FontFamily.Monospace)) { state.toggleLinePrefix("> ") }
+        ToolbarButton("Link", TextStyle(textDecoration = TextDecoration.Underline)) { state.insertLink() }
         ToolbarButton("⊞", TextStyle()) { state.insertTable() }
         ToolbarButton("↶", TextStyle()) { state.undo() }
         ToolbarButton("↷", TextStyle()) { state.redo() }

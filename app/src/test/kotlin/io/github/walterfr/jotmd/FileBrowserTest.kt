@@ -32,6 +32,44 @@ class FileBrowserTest {
         assertEquals(null, resolveWikilink("inexistente", nodes))
     }
 
+    @Test fun wikilinkDesambiguaHomonimosPorProfundidadeECaminhoRelativo() {
+        val deepFirst = DocNode("nota.md", "id-deep", isDir = false, depth = 2)
+        val shallowLater = DocNode("nota.md", "id-shallow", isDir = false, depth = 1)
+        val rootNote = DocNode("nota.md", "id-root", isDir = false, depth = 0)
+        val nodes = listOf(
+            DocNode("alfa", "d-alfa", isDir = true, depth = 0),
+            DocNode("sub", "d-sub", isDir = true, depth = 1),
+            deepFirst,
+            DocNode("beta", "d-beta", isDir = true, depth = 0),
+            shallowLater,
+            rootNote,
+        )
+
+        // Sem barra: escolhe menor depth (raiz ganha de depth 1 e 2)
+        assertEquals("id-root", resolveWikilink("nota", nodes)?.docId)
+
+        // Sem raiz: menor depth entre subpastas (depth 1 antes de depth 2, mesmo listado depois)
+        assertEquals("id-shallow", resolveWikilink("nota", nodes.dropLast(1))?.docId)
+
+        // Com barra exata: resolve subpasta específica mesmo após homônimo anterior
+        assertEquals("id-shallow", resolveWikilink("beta/nota", nodes)?.docId)
+        assertEquals("id-deep", resolveWikilink("alfa/sub/nota.md", nodes)?.docId)
+
+        // Sufixo relativo quando omite pasta pai
+        assertEquals("id-deep", resolveWikilink("sub/nota", nodes)?.docId)
+    }
+
+    @Test fun wikilinkIgnoraAncoraENormalizaBarras() {
+        val nodes = listOf(
+            DocNode("pasta", "d1", isDir = true, depth = 0),
+            DocNode("guia.md", "id-guia", isDir = false, depth = 1),
+        )
+        assertEquals("id-guia", resolveWikilink("guia#secao-2", nodes)?.docId)
+        assertEquals("id-guia", resolveWikilink("pasta\\guia.md#topo", nodes)?.docId)
+        assertEquals(null, resolveWikilink("#apenas-ancora", nodes))
+        assertEquals(null, resolveWikilink("   ", nodes))
+    }
+
     @Test fun sanitizeFileNameRemoveInvalidosEGaranteExtensaoMarkdown() {
         assertEquals("Minha Nota.md", sanitizeFileName("  Minha Nota  ", ensureMarkdownExtension = true))
         assertEquals("nota.md", sanitizeFileName("nota.md", ensureMarkdownExtension = true))

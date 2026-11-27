@@ -90,6 +90,7 @@ import io.github.walterfr.jotmd.core.findInDocument
 import io.github.walterfr.jotmd.core.importDocumentBytes
 import io.github.walterfr.jotmd.core.isValidSearchRegex
 import io.github.walterfr.jotmd.core.outlineOf
+import io.github.walterfr.jotmd.core.selectionStatsOf
 import io.github.walterfr.jotmd.core.suggestedMarkdownTitle
 import io.github.walterfr.jotmd.editor.AppLanguage
 import io.github.walterfr.jotmd.editor.DarkMdPalette
@@ -114,7 +115,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import io.github.walterfr.jotmd.editor.EditorScreen
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
@@ -375,24 +378,23 @@ private fun EditorHostScreen(
         return true
     }
 
-    suspend fun flushTabAsync(tab: EditorTab): Boolean {
+    suspend fun flushTabAsync(tab: EditorTab, precomputedText: String? = null): Boolean {
         val session = tab.session
+        val text = precomputedText ?: withContext(Dispatchers.Main.immediate) { tab.editorState.text() }
         if (session != null) {
-            val text = tab.editorState.text()
             val failed = runCatching { withContext(Dispatchers.IO) { session.saveIfChanged(text) } }.isFailure
-            tabManager.updateSaveState(tab.id, failed)
+            withContext(Dispatchers.Main.immediate) { tabManager.updateSaveState(tab.id, failed) }
             return !failed
         }
-        val text = tab.editorState.text()
         if (text.isNotBlank()) {
-            val draftId = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also {
-                tabManager.updateDraftId(tab.id, it)
+            val draftId = tab.draftId ?: "draft-${System.currentTimeMillis()}-${tab.id}".also { newId ->
+                withContext(Dispatchers.Main.immediate) { tabManager.updateDraftId(tab.id, newId) }
             }
             withContext(Dispatchers.IO) { runCatching { draftRepo.saveDraft(draftId, tab.title, text) } }
         } else if (tab.draftId != null) {
             val oldDraftId = tab.draftId
             withContext(Dispatchers.IO) { runCatching { draftRepo.deleteDraft(oldDraftId) } }
-            tabManager.updateDraftId(tab.id, null)
+            withContext(Dispatchers.Main.immediate) { tabManager.updateDraftId(tab.id, null) }
         }
         return true
     }
@@ -439,15 +441,18 @@ private fun EditorHostScreen(
     }
 
     // Matar o app dentro da janela do debounce perderia a última edição.
+    val stopFlushScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     val lifecycle = (context as ComponentActivity).lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                // ponytail: escrita síncrona na main — arquivo de texto pequeno.
-                for (tab in tabManager.tabs.toList()) {
-                    flushTab(tab)
-                }
+                val snapshots = tabManager.tabs.toList().map { it to it.editorState.text() }
                 persistSessionTabs()
+                stopFlushScope.launch {
+                    for ((tab, text) in snapshots) {
+                        flushTabAsync(tab, text)
+                    }
+                }
             }
         }
         lifecycle.addObserver(observer)
@@ -776,6 +781,43 @@ private fun EditorHostScreen(
         nodes = listed
         runCatching { withContext(Dispatchers.IO) { index.reindex(context.contentResolver, r, listed) } }
         indexVersion++
+    }
+
+    val saveAsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/markdown"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val targetTab = tabManager.activeTab
+        val text = targetTab.editorState.text()
+        val oldDraftId = targetTab.draftId
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val sentinel = if (text.isEmpty()) "\u0000" else ""
+                    val session = FileSession(context.contentResolver, uri, lastSaved = sentinel)
+                    session.saveIfChanged(text)
+                    val name = displayName(context.contentResolver, uri) ?: targetTab.title
+                    if (oldDraftId != null) {
+                        runCatching { draftRepo.deleteDraft(oldDraftId) }
+                    }
+                    session to name
+                }
+            }
+            result.onFailure {
+                notice = s.saveError
+            }.onSuccess { (session, name) ->
+                tabManager.bindFile(targetTab.id, uri.toString(), name, session)
+                persistSessionTabs()
+                root?.let { refreshTree(it) }
+                notice = "${s.savedNotice}: $name"
+            }
+        }
     }
 
     // Relista ao trocar a raiz e a cada abertura do painel (arquivos mudam fora
@@ -1174,6 +1216,14 @@ private fun EditorHostScreen(
                                 },
                             )
                             DropdownMenuItem(
+                                text = { Text(s.saveAs) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    val base = activeTab.title.substringBeforeLast('.').ifBlank { s.untitled }
+                                    saveAsLauncher.launch("$base.md")
+                                },
+                            )
+                            DropdownMenuItem(
                                 text = { Text(s.importAction) },
                                 onClick = {
                                     showMoreMenu = false
@@ -1494,6 +1544,14 @@ private fun EditorHostScreen(
         val stats = remember(activeTab.id, activeTab.editorState.doc) {
             docStatsOf(activeTab.editorState.doc)
         }
+        val selectedStats = remember(
+            activeTab.id,
+            activeTab.editorState.focusedId,
+            activeTab.editorState.editValue.selection,
+            activeTab.editorState.editValue.text,
+        ) {
+            activeTab.editorState.selectedText().takeIf { it.isNotEmpty() }?.let(::selectionStatsOf)
+        }
         AlertDialog(
             onDismissRequest = { showWordCountDialog = false },
             title = { Text(s.wordCount) },
@@ -1503,6 +1561,16 @@ private fun EditorHostScreen(
                     WordCountRow(s.lines, stats.lines.toString())
                     WordCountRow(s.words, stats.words.toString())
                     WordCountRow(s.characters, stats.chars.toString())
+                    if (selectedStats != null) {
+                        HorizontalDivider()
+                        Text(
+                            text = s.inSelection,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        WordCountRow(s.words, selectedStats.words.toString())
+                        WordCountRow(s.characters, selectedStats.chars.toString())
+                    }
                 }
             },
             confirmButton = {

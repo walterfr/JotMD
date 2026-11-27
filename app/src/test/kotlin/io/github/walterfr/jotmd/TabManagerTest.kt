@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class TabManagerTest {
@@ -240,5 +241,44 @@ class TabManagerTest {
         assertEquals(first.id, tm.tabs[0].id)
         assertEquals(opened.id, tm.tabs[1].id)
         assertEquals(opened.id, tm.activeTabId)
+    }
+
+    @Test
+    fun `bindFile limpa draftId e saveFailed, preserva EditorState e undo e retorna null se id faltar`() {
+        val tm = TabManager(initialTitle = "Sem Título", initialText = "inicial\n", initialKey = null)
+        val draftTab = tm.activeTab
+        tm.updateDraftId(draftTab.id, "draft-42")
+        tm.updateSaveState(draftTab.id, saveFailed = true)
+        draftTab.editorState.focus(draftTab.editorState.doc.blocks[0])
+        draftTab.editorState.edit(TextFieldValue("editado", TextRange(7)))
+
+        // Abre outra aba para garantir que bindFile reativa a aba vinculada
+        val other = tm.openOrFocus(key = "k-other", title = "outra.md", text = "outra\n")
+        assertEquals(other.id, tm.activeTabId)
+
+        val bound = tm.bindFile(
+            id = draftTab.id,
+            key = "content://doc/saved",
+            title = "Salva.md",
+            session = null,
+        )
+
+        assertSame(bound, tm.activeTab)
+        assertEquals(draftTab.id, tm.activeTabId)
+        assertEquals("content://doc/saved", bound?.key)
+        assertEquals("Salva.md", bound?.title)
+        assertNull(bound?.session)
+        assertNull(bound?.draftId)
+        assertFalse(bound?.saveFailed ?: true)
+        assertSame(draftTab.editorState, bound?.editorState)
+        assertEquals("editado\n", bound?.editorState?.text())
+
+        // Histórico de undo permanece intacto
+        bound?.editorState?.undo()
+        assertEquals("inicial\n", bound?.editorState?.text())
+
+        // ID inexistente retorna null sem alterar aba ativa
+        assertNull(tm.bindFile(9999L, key = "k-x", title = "x.md", session = null))
+        assertEquals(draftTab.id, tm.activeTabId)
     }
 }

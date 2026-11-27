@@ -149,6 +149,27 @@ class TabManager(
     }
 
     /**
+     * Vincula uma aba existente a um arquivo salvo, atualizando [key], [title]
+     * e [session], limpando [EditorTab.saveFailed] e [EditorTab.draftId],
+     * preservando [EditorTab.editorState] (e histórico undo/redo) e ativando a aba.
+     * Retorna `null` quando [id] não existe.
+     */
+    fun bindFile(id: Long, key: String, title: String, session: FileSession? = null): EditorTab? {
+        val idx = _tabs.indexOfFirst { it.id == id }
+        if (idx < 0) return null
+        val updated = _tabs[idx].copy(
+            key = key,
+            title = title,
+            session = session,
+            saveFailed = false,
+            draftId = null,
+        )
+        _tabs[idx] = updated
+        activeTabId = updated.id
+        return updated
+    }
+
+    /**
      * Fecha a aba [id] após consultar [onBeforeClose]. Se [onBeforeClose]
      * retornar `false`, marca `saveFailed = true` na aba e mantém ela aberta
      * para não perder edições não gravadas. Ao fechar a última aba restante,
