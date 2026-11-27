@@ -1,0 +1,2 @@
+- Automatically focus an editable block and open the soft keyboard in new or empty tabs
+- Allow tapping anywhere on the empty document canvas to focus the editor and bring up the keyboard

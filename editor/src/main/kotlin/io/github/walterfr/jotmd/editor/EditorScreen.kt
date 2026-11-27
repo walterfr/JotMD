@@ -1,6 +1,7 @@
 package io.github.walterfr.jotmd.editor
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,10 +17,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import io.github.walterfr.jotmd.core.docRefsOf
 import io.github.walterfr.jotmd.core.outlineOf
@@ -35,10 +39,22 @@ fun EditorScreen(
     state: EditorState,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    autoFocusIfEmpty: Boolean = true,
 ) {
     val outline = remember(state.doc) { outlineOf(state.doc) }
     val refs = remember(state.doc) { docRefsOf(state.doc) }
     var viewportHeightPx by remember { mutableStateOf(0) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val onTapEmptyCanvas by rememberUpdatedState {
+        state.focusOrCreateBlock()
+        keyboardController?.show()
+    }
+
+    LaunchedEffect(state, state.doc.blocks.isEmpty(), autoFocusIfEmpty) {
+        if (autoFocusIfEmpty && state.doc.blocks.isEmpty()) {
+            state.focusOrCreateBlock()
+        }
+    }
 
     LaunchedEffect(state.isTypewriterMode, state.focusedId, state.editValue.selection, viewportHeightPx) {
         if (!state.isTypewriterMode || viewportHeightPx <= 0) return@LaunchedEffect
@@ -64,7 +80,8 @@ fun EditorScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .background(MdTokens.background)
-                .onSizeChanged { viewportHeightPx = it.height },
+                .onSizeChanged { viewportHeightPx = it.height }
+                .pointerInput(Unit) { detectTapGestures { onTapEmptyCanvas() } },
             state = listState,
             contentPadding = MdTokens.documentPadding,
         ) {

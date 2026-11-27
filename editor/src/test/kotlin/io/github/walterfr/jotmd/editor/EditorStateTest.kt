@@ -858,4 +858,40 @@ class EditorStateTest {
         assertTrue(s.insertImageMarkdown("logo", "assets/logo.png"))
         assertEquals("olá **mundo**![logo](assets/logo.png)", s.doc.blocks[0].source)
     }
+
+    @Test
+    fun `focusOrCreateBlock cria paragrafo em documento vazio sem quebrar texto vazio e aceita edicao`() {
+        val s = EditorState("")
+        assertTrue(s.doc.blocks.isEmpty())
+        assertEquals(0, s.focusRequestNonce)
+
+        s.focusOrCreateBlock()
+        assertEquals(1, s.doc.blocks.size)
+        val created = s.doc.blocks[0]
+        assertEquals(BlockType.PARAGRAPH, created.type)
+        assertEquals(created.id, s.focusedId)
+        assertEquals("", s.text())
+        assertEquals(1, s.focusRequestNonce)
+
+        // Segunda chamada sem perder foco não duplica blocos, apenas renova o nonce de foco.
+        s.focusOrCreateBlock()
+        assertEquals(1, s.doc.blocks.size)
+        assertEquals(created.id, s.focusedId)
+        assertEquals(2, s.focusRequestNonce)
+
+        s.edit(TextFieldValue("# Ola", TextRange(5)), created.id)
+        assertEquals("# Ola", s.text())
+    }
+
+    @Test
+    fun `focusOrCreateBlock em documento sem foco seleciona o ultimo bloco e renova nonce`() {
+        val s = EditorState("primeiro\n\nsegundo")
+        assertEquals(null, s.focusedId)
+
+        s.focusOrCreateBlock()
+        val last = s.doc.blocks.last()
+        assertEquals(last.id, s.focusedId)
+        assertEquals(TextRange("segundo".length), s.editValue.selection)
+        assertEquals(1, s.focusRequestNonce)
+    }
 }

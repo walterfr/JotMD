@@ -1,0 +1,2 @@
+- Foca automaticamente um bloco editavel e abre o teclado virtual em novas abas ou documentos em branco
+- Permite tocar em qualquer espaco vazio do documento para focar o editor e exibir o teclado

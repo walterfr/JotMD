@@ -165,6 +165,10 @@ Concluído em `v0.4.2` (`versionCode 8`):
 - Inicialização em nota em branco limpa no Android e no Desktop (removido carregamento/empacotamento automático de `typora-ref.md` no runtime).
 - `android:configChanges` em `MainActivity` no `AndroidManifest.xml` para preservar abas, texto, cursor e scroll na rotação do aparelho, além da persistência e restauração das abas SAF e aba ativa via `SharedPreferences` (`AndroidSessionTabs`).
 
+Concluído em `v0.4.3` (`versionCode 9`):
+
+- `EditorState.focusOrCreateBlock()` + `focusRequestNonce`, `LocalSoftwareKeyboardController.current?.show()` em `FocusedBlockField` e toque na área vazia de `EditorScreen` para criar/focar bloco editável e abrir o teclado virtual automaticamente em novas abas e documentos vazios.
+
 Pendente:
 
 - Abrir Merge Request no `fdroiddata` copiando `fdroid/io.github.walterfr.jotmd.yml`

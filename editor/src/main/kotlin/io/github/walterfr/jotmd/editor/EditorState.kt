@@ -78,6 +78,8 @@ class EditorState(initialText: String = "") {
         private set
     var scrollRequestBlockIndex: Int? = null
         private set
+    var focusRequestNonce: Int by mutableStateOf(0)
+        private set
 
     var searchHighlightQuery: String by mutableStateOf("")
         private set
@@ -152,9 +154,32 @@ class EditorState(initialText: String = "") {
     }
 
     fun focus(block: Block) {
-        if (focusedId == block.id) return
+        if (focusedId == block.id) {
+            focusRequestNonce++
+            return
+        }
         focusedId = block.id
         editValue = TextFieldValue(block.source, TextRange(block.source.length))
+        focusRequestNonce++
+        clearStaleEcho()
+    }
+
+    /**
+     * Garante um bloco editável focado (criando um parágrafo vazio se o documento
+     * estiver sem blocos) e incrementa [focusRequestNonce] para solicitar IME.
+     */
+    fun focusOrCreateBlock() {
+        val currentId = focusedId
+        if (currentId != null && doc.blocks.any { it.id == currentId }) {
+            focusRequestNonce++
+            return
+        }
+        val target = doc.blocks.lastOrNull() ?: Block(ids.next(), BlockType.PARAGRAPH, "", "").also { empty ->
+            doc = doc.copy(blocks = listOf(empty))
+        }
+        focusedId = target.id
+        editValue = TextFieldValue(target.source, TextRange(target.source.length))
+        focusRequestNonce++
         clearStaleEcho()
     }
 

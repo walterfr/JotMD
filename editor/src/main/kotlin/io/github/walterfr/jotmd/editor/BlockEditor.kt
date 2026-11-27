@@ -28,6 +28,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -144,7 +145,11 @@ private fun FocusedBlockField(
 ) {
     var hadFocus by remember(block.id) { mutableStateOf(false) }
     val focusRequester = remember(block.id) { FocusRequester() }
-    LaunchedEffect(block.id) { focusRequester.requestFocus() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(block.id, state.focusRequestNonce) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
     val visualTransformation = remember(
         state.isSourceMode,
         MdTokens.themePreset,

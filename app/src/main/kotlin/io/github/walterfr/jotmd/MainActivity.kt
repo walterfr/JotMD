@@ -1344,7 +1344,12 @@ private fun EditorHostScreen(
                     val listState = remember(activeTab.id) {
                         listStates.getOrPut(activeTab.id) { LazyListState() }
                     }
-                    EditorScreen(activeTab.editorState, Modifier.weight(1f), listState = listState)
+                    EditorScreen(
+                        activeTab.editorState,
+                        Modifier.weight(1f),
+                        listState = listState,
+                        autoFocusIfEmpty = sessionRestored,
+                    )
                 }
             }
         }
