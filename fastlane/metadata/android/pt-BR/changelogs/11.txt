@@ -1,0 +1,1 @@
+- Adiciona menu Sobre no Android e no Desktop com GitHub Sponsors, Ko-fi, Buy Me a Coffee, Pix copia e cola e a inscricao "Feito com ❤️ em Fortaleza."

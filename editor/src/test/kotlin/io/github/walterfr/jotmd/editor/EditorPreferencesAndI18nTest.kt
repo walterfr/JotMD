@@ -88,10 +88,23 @@ class EditorPreferencesAndI18nTest {
         assertEquals("3 replaced", EnStrings.replacedCount(3))
         assertEquals("Na seleção", PtBrStrings.inSelection)
         assertEquals("Salvo", PtBrStrings.savedNotice)
+        assertEquals("Sobre", PtBrStrings.about)
+        assertEquals("Apoie o projeto", PtBrStrings.supportProject)
+        assertEquals("Copiar Pix", PtBrStrings.copyPix)
+        assertEquals("Pix copiado!", PtBrStrings.pixCopied)
         assertEquals("In Selection", EnStrings.inSelection)
         assertEquals("Saved", EnStrings.savedNotice)
+        assertEquals("About", EnStrings.about)
+        assertEquals("Support the project", EnStrings.supportProject)
+        assertEquals("Copy Pix", EnStrings.copyPix)
+        assertEquals("Pix copied!", EnStrings.pixCopied)
         assertTrue(PtBrStrings.inSelection.isNotBlank() && PtBrStrings.savedNotice.isNotBlank())
         assertTrue(EnStrings.inSelection.isNotBlank() && EnStrings.savedNotice.isNotBlank())
+        assertEquals("Feito com ❤️ em Fortaleza.", JotAboutInfo.MADE_IN_FORTALEZA)
+        assertTrue(JotAboutInfo.GITHUB_SPONSORS_URL.startsWith("https://"))
+        assertTrue(JotAboutInfo.KOFI_URL.startsWith("https://"))
+        assertTrue(JotAboutInfo.BUY_ME_A_COFFEE_URL.startsWith("https://"))
+        assertTrue(JotAboutInfo.PIX_PAYLOAD.contains("WALTER REBOUCAS"))
     }
 
     @Test

@@ -97,6 +97,7 @@ import io.github.walterfr.jotmd.editor.EditorPrefs
 import io.github.walterfr.jotmd.editor.EditorScreen
 import io.github.walterfr.jotmd.editor.EditorState
 import io.github.walterfr.jotmd.editor.FOOTNOTE_URI
+import io.github.walterfr.jotmd.editor.JotAboutInfo
 import io.github.walterfr.jotmd.editor.JotStrings
 import io.github.walterfr.jotmd.editor.LightMdPalette
 import io.github.walterfr.jotmd.editor.LocalJotStrings
@@ -116,6 +117,8 @@ import kotlinx.coroutines.withContext
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import java.io.FilenameFilter
 import java.net.URI
 import java.nio.charset.StandardCharsets
@@ -395,6 +398,7 @@ private fun DesktopShell(
     var quickOpenQuery by remember { mutableStateOf("") }
     var showWordCountModal by remember { mutableStateOf(false) }
     var showPreferencesModal by remember { mutableStateOf(false) }
+    var showAboutModal by remember { mutableStateOf(false) }
     var treeDialog by remember { mutableStateOf<TreeDialogState?>(null) }
     var dialogError by remember { mutableStateOf<String?>(null) }
     var dialogBusy by remember { mutableStateOf(false) }
@@ -591,6 +595,10 @@ private fun DesktopShell(
     onRegisterRichPaste(::triggerRichPaste)
     onRegisterEscape {
         when {
+            showAboutModal -> {
+                showAboutModal = false
+                true
+            }
             showPreferencesModal -> {
                 showPreferencesModal = false
                 true
@@ -835,6 +843,7 @@ private fun DesktopShell(
                     onToggleSource = { activeTab?.editorState?.toggleSourceMode() },
                     onCycleTheme = onCycleTheme,
                     onOpenPreferences = { showPreferencesModal = true },
+                    onOpenAbout = { showAboutModal = true },
                 )
                 if (showFindBar && activeTab != null) {
                     HorizontalDivider(color = MdTokens.tableBorder)
@@ -996,6 +1005,9 @@ private fun DesktopShell(
                 onPrefsChange = onPrefsChange,
                 onDismiss = { showPreferencesModal = false },
             )
+        }
+        if (showAboutModal) {
+            AboutModal(onDismiss = { showAboutModal = false })
         }
         treeDialog?.let { dialog ->
             TreeCrudModal(
@@ -1415,6 +1427,7 @@ private fun HeaderBar(
     onToggleSource: () -> Unit,
     onCycleTheme: () -> Unit,
     onOpenPreferences: () -> Unit,
+    onOpenAbout: () -> Unit,
 ) {
     val s = LocalJotStrings.current
     Row(
@@ -1448,6 +1461,9 @@ private fun HeaderBar(
             }
             TextButton(onClick = onOpenPreferences) {
                 Text(s.preferences)
+            }
+            TextButton(onClick = onOpenAbout) {
+                Text(s.about)
             }
         }
 
@@ -1898,6 +1914,143 @@ private fun paletteForPreset(preset: MdThemePreset): MdPalette = when (preset) {
     MdThemePreset.PIXYLL -> PixyllMdPalette
     MdThemePreset.WHITEY -> WhiteyMdPalette
     MdThemePreset.NIGHT -> DarkMdPalette
+}
+
+/** Modal Sobre com links de apoio, payload Pix e assinatura local. */
+@Composable
+private fun AboutModal(onDismiss: () -> Unit) {
+    val s = LocalJotStrings.current
+    var pixCopied by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.25f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(460.dp)
+                .heightIn(max = 580.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
+            shape = RoundedCornerShape(8.dp),
+            color = MdTokens.fenceBackground,
+            border = BorderStroke(1.dp, MdTokens.tableBorder),
+            shadowElevation = 12.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "JotMD",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MdTokens.text,
+                        )
+                        Text(
+                            text = JotAboutInfo.MADE_IN_FORTALEZA,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MdTokens.muted,
+                        )
+                    }
+                    TextButton(onClick = onDismiss) { Text(s.close) }
+                }
+                HorizontalDivider(color = MdTokens.tableBorder)
+                Text(
+                    text = s.aboutDescription,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MdTokens.text,
+                )
+                HorizontalDivider(color = MdTokens.tableBorder)
+                Text(
+                    text = s.supportProject,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MdTokens.link,
+                )
+                Text(
+                    text = s.supportPrompt,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MdTokens.text,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    for ((label, url) in listOf(
+                        "GitHub Sponsors" to JotAboutInfo.GITHUB_SPONSORS_URL,
+                        "Ko-fi" to JotAboutInfo.KOFI_URL,
+                        "Buy Me a Coffee" to JotAboutInfo.BUY_ME_A_COFFEE_URL,
+                        s.sourceCode to JotAboutInfo.REPO_URL,
+                    )) {
+                        TextButton(onClick = { openExternalUri(url) }) { Text(label) }
+                    }
+                }
+                HorizontalDivider(color = MdTokens.tableBorder)
+                Text(
+                    text = s.pixLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MdTokens.text,
+                )
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MdTokens.background,
+                    border = BorderStroke(1.dp, MdTokens.tableBorder),
+                ) {
+                    Text(
+                        text = JotAboutInfo.PIX_PAYLOAD,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                        color = MdTokens.muted,
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = JotAboutInfo.LICENSE_LABEL,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MdTokens.muted,
+                    )
+                    TextButton(
+                        onClick = {
+                            runCatching {
+                                Toolkit.getDefaultToolkit().systemClipboard
+                                    .setContents(StringSelection(JotAboutInfo.PIX_PAYLOAD), null)
+                            }
+                            pixCopied = true
+                        },
+                    ) {
+                        Text(if (pixCopied) s.pixCopied else s.copyPix)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** Modal de Preferências (Aparência, Editor e Geral) inspirado no Typora. */

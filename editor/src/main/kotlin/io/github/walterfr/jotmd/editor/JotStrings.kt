@@ -93,6 +93,14 @@ data class JotStrings(
     val draft: String,
     val inSelection: String,
     val savedNotice: String,
+    val about: String,
+    val aboutDescription: String,
+    val supportProject: String,
+    val supportPrompt: String,
+    val pixLabel: String,
+    val copyPix: String,
+    val pixCopied: String,
+    val sourceCode: String,
     private val replacedSuffix: String,
     private val renameFailedPrefix: String,
 ) {
@@ -196,6 +204,14 @@ val PtBrStrings = JotStrings(
     draft = "Rascunho",
     inSelection = "Na seleção",
     savedNotice = "Salvo",
+    about = "Sobre",
+    aboutDescription = "Leitor e editor de Markdown nativo, gratuito e de código aberto.",
+    supportProject = "Apoie o projeto",
+    supportPrompt = "Se o JotMD te ajudou, considere apoiar o desenvolvimento:",
+    pixLabel = "Pix (Brasil) — Copia e cola",
+    copyPix = "Copiar Pix",
+    pixCopied = "Pix copiado!",
+    sourceCode = "Código-fonte (GitHub)",
     replacedSuffix = "substituído(s)",
     renameFailedPrefix = "Não foi possível renomear",
 )
@@ -286,9 +302,28 @@ val EnStrings = JotStrings(
     draft = "Draft",
     inSelection = "In Selection",
     savedNotice = "Saved",
+    about = "About",
+    aboutDescription = "Free and open-source native Markdown reader and editor.",
+    supportProject = "Support the project",
+    supportPrompt = "If JotMD helped you, consider supporting development:",
+    pixLabel = "Pix (Brazil) — Copy & paste",
+    copyPix = "Copy Pix",
+    pixCopied = "Pix copied!",
+    sourceCode = "Source code (GitHub)",
     replacedSuffix = "replaced",
     renameFailedPrefix = "Could not rename",
 )
+
+object JotAboutInfo {
+    const val REPO_URL = "https://github.com/walterfr/JotMD"
+    const val GITHUB_SPONSORS_URL = "https://github.com/sponsors/walterfr"
+    const val KOFI_URL = "https://ko-fi.com/walterfr"
+    const val BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/walterfr"
+    const val PIX_PAYLOAD =
+        "00020101021126400014br.gov.bcb.pix0118walterfr@gmail.com5204000053039865802BR5915WALTER REBOUCAS6009FORTALEZA62070503***63045603"
+    const val MADE_IN_FORTALEZA = "Feito com ❤️ em Fortaleza."
+    const val LICENSE_LABEL = "MIT · walterfr/JotMD"
+}
 
 fun stringsFor(language: AppLanguage, locale: Locale = Locale.getDefault()): JotStrings = when (language) {
     AppLanguage.PT_BR -> PtBrStrings

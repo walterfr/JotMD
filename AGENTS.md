@@ -176,6 +176,10 @@ Concluído em `v0.5.0` (`versionCode 10`):
 - **Toolbar expandida (`Toolbar.kt` + `EditorState.kt`):** botões `H` (`cycleHeadingLevel`), `•`, `☐`, `>` (`toggleLinePrefix`) e `Link` (`insertLink`) seguros de foco (`pointerInput(Unit)`).
 - **Melhorias internas:** desempate de `[[wikilink]]` por caminho relativo/profundidade (`FileBrowser`), ranking FTS4 via `matchinfo(docs, 'pcx')` (`SearchIndex`), cache de erros em `ImagePreview.android.kt`, escrita UTF-8 `"rwt"`→`"wt"` em `FileSession` e flush `ON_STOP` em `Dispatchers.IO`.
 
+Concluído em `v0.6.0` (`versionCode 11`):
+
+- **Menu Sobre (`AboutDialog` Android + `AboutModal` Desktop):** entrada `Sobre`/`About` no overflow `⋮` do Android e no cabeçalho Desktop com links de apoio (GitHub Sponsors, Ko-fi, Buy Me a Coffee, repositório GitHub), payload **Pix** com botão `Copiar Pix` (`JotAboutInfo`) e inscrição `"Feito com ❤️ em Fortaleza."`.
+
 Pendente:
 
 - Abrir Merge Request no `fdroiddata` copiando `fdroid/io.github.walterfr.jotmd.yml`

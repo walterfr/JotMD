@@ -1,5 +1,6 @@
 package io.github.walterfr.jotmd
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -96,6 +97,7 @@ import io.github.walterfr.jotmd.editor.AppLanguage
 import io.github.walterfr.jotmd.editor.DarkMdPalette
 import io.github.walterfr.jotmd.editor.EditorPrefs
 import io.github.walterfr.jotmd.editor.FOOTNOTE_URI
+import io.github.walterfr.jotmd.editor.JotAboutInfo
 import io.github.walterfr.jotmd.editor.LightMdPalette
 import io.github.walterfr.jotmd.editor.LocalJotStrings
 import io.github.walterfr.jotmd.editor.MdPalette
@@ -273,6 +275,7 @@ private fun EditorHostScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     var showWordCountDialog by remember { mutableStateOf(false) }
     var showPrefsDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var sessionRestored by remember { mutableStateOf(false) }
     var openedExternally by remember { mutableStateOf(false) }
@@ -1296,6 +1299,13 @@ private fun EditorHostScreen(
                                     }
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text(s.about) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    showAboutDialog = true
+                                },
+                            )
                         }
                     }
                 }
@@ -1586,6 +1596,104 @@ private fun EditorHostScreen(
             onDismiss = { showPrefsDialog = false },
         )
     }
+
+    if (showAboutDialog) {
+        AboutDialog(onDismiss = { showAboutDialog = false })
+    }
+}
+
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    val s = LocalJotStrings.current
+    val context = LocalContext.current
+    val defaultUriHandler = LocalUriHandler.current
+    val versionName = remember(context) {
+        runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+        }.getOrDefault("")
+    }
+    var pixCopied by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(if (versionName.isNotBlank()) "JotMD v$versionName" else "JotMD")
+                Text(
+                    text = JotAboutInfo.MADE_IN_FORTALEZA,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(s.aboutDescription, style = MaterialTheme.typography.bodyMedium)
+                HorizontalDivider()
+                Text(
+                    text = s.supportProject,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(s.supportPrompt, style = MaterialTheme.typography.bodySmall)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    for ((label, url) in listOf(
+                        "GitHub Sponsors" to JotAboutInfo.GITHUB_SPONSORS_URL,
+                        "Ko-fi" to JotAboutInfo.KOFI_URL,
+                        "Buy Me a Coffee" to JotAboutInfo.BUY_ME_A_COFFEE_URL,
+                        s.sourceCode to JotAboutInfo.REPO_URL,
+                    )) {
+                        TextButton(
+                            onClick = { runCatching { defaultUriHandler.openUri(url) } },
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                        ) {
+                            Text(label)
+                        }
+                    }
+                }
+                HorizontalDivider()
+                Text(
+                    text = s.pixLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = JotAboutInfo.PIX_PAYLOAD,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = JotAboutInfo.LICENSE_LABEL,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(
+                        onClick = {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                            cm?.setPrimaryClip(ClipData.newPlainText("Pix JotMD", JotAboutInfo.PIX_PAYLOAD))
+                            pixCopied = true
+                        },
+                    ) {
+                        Text(if (pixCopied) s.pixCopied else s.copyPix)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(s.close) }
+        },
+    )
 }
 
 @Composable
