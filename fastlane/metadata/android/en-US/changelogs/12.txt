@@ -1,0 +1,1 @@
+- Remove strict jvmToolchain(17) lock in :core-md for OpenJDK 21 build compatibility on F-Droid buildservers.

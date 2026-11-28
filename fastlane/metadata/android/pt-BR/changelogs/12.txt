@@ -1,0 +1,1 @@
+- Remove trava de jvmToolchain(17) no modulo :core-md para compatibilidade de compilacao com OpenJDK 21 no buildserver do F-Droid.

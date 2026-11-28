@@ -180,10 +180,13 @@ Concluído em `v0.6.0` (`versionCode 11`):
 
 - **Menu Sobre (`AboutDialog` Android + `AboutModal` Desktop):** entrada `Sobre`/`About` no overflow `⋮` do Android e no cabeçalho Desktop com links de apoio (GitHub Sponsors, Ko-fi, Buy Me a Coffee, repositório GitHub), payload **Pix** com botão `Copiar Pix` (`JotAboutInfo`) e inscrição `"Feito com ❤️ em Fortaleza."`.
 
+Concluído em `v0.6.1` (`versionCode 12`):
+
+- **Compatibilidade OpenJDK 21 (F-Droid buildserver):** removida trava `jvmToolchain(17)` em `core-md/build.gradle.kts` em favor de `sourceCompatibility`/`targetCompatibility` 17 + `compilerOptions.jvmTarget = JVM_17`; receita `fdroid/io.github.walterfr.jotmd.yml` ajustada (`AutoUpdateMode: Version`, categorias ordenadas, LF) no MR `!59583`.
+
 Pendente:
 
-- Abrir Merge Request no `fdroiddata` copiando `fdroid/io.github.walterfr.jotmd.yml`
-  para `metadata/io.github.walterfr.jotmd.yml`.
+- Acompanhar aprovação/merge do MR `!59583` no `fdroiddata` (`fdroid/io.github.walterfr.jotmd.yml` → `metadata/io.github.walterfr.jotmd.yml`).
 
 ## Armadilhas já pagas (não repetir)
 
